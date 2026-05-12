@@ -1,4 +1,5 @@
 import { pgTable, text, timestamp, uuid, boolean } from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -17,6 +18,14 @@ export const wallets = pgTable('wallets', {
   isPrimary: boolean('is_primary').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
+
+export const usersRelations = relations(users, ({ many }) => ({
+  wallets: many(wallets),
+}));
+
+export const walletsRelations = relations(wallets, ({ one }) => ({
+  user: one(users, { fields: [wallets.userId], references: [users.id] }),
+}));
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;

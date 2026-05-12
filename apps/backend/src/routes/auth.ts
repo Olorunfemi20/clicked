@@ -1,0 +1,84 @@
+import { Router } from 'express';
+import { Keypair } from '@stellar/stellar-sdk';
+import { db } from '../db/index.js';
+import { users, wallets } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { createNonce, consumeNonce } from '../lib/nonce.js';
+import { signToken } from '../lib/jwt.js';
+
+export const authRouter = Router();
+
+// Step 1: client requests a challenge nonce for a wallet address
+authRouter.post('/challenge', (req, res) => {
+  const { walletAddress } = req.body as { walletAddress?: string };
+
+  if (!walletAddress) {
+    res.status(400).json({ error: 'walletAddress is required' });
+    return;
+  }
+
+  const nonce = createNonce(walletAddress);
+  const message = `Sign in to Clicked\nWallet: ${walletAddress}\nNonce: ${nonce}`;
+
+  res.json({ message, nonce });
+});
+
+// Step 2: client signs the message and submits the signature
+authRouter.post('/verify', async (req, res) => {
+  const { walletAddress, signature, nonce } = req.body as {
+    walletAddress?: string;
+    signature?: string;
+    nonce?: string;
+  };
+
+  if (!walletAddress || !signature || !nonce) {
+    res.status(400).json({ error: 'walletAddress, signature, and nonce are required' });
+    return;
+  }
+
+  // Validate and consume nonce
+  const valid = consumeNonce(walletAddress, nonce);
+  if (!valid) {
+    res.status(401).json({ error: 'Invalid or expired nonce' });
+    return;
+  }
+
+  // Verify Stellar keypair signature
+  try {
+    const message = `Sign in to Clicked\nWallet: ${walletAddress}\nNonce: ${nonce}`;
+    const messageBytes = Buffer.from(message);
+    const signatureBytes = Buffer.from(signature, 'hex');
+    const keypair = Keypair.fromPublicKey(walletAddress);
+
+    if (!keypair.verify(messageBytes, signatureBytes)) {
+      res.status(401).json({ error: 'Signature verification failed' });
+      return;
+    }
+  } catch {
+    res.status(401).json({ error: 'Invalid signature or wallet address' });
+    return;
+  }
+
+  // Upsert user + wallet
+  let userId: string;
+
+  const existingWallet = await db.query.wallets.findFirst({
+    where: eq(wallets.address, walletAddress),
+    with: { user: true },
+  });
+
+  if (existingWallet) {
+    userId = existingWallet.userId;
+  } else {
+    const [newUser] = await db.insert(users).values({}).returning({ id: users.id });
+    if (!newUser) {
+      res.status(500).json({ error: 'Failed to create user' });
+      return;
+    }
+    userId = newUser.id;
+    await db.insert(wallets).values({ userId, address: walletAddress, isPrimary: true });
+  }
+
+  const token = signToken({ userId, walletAddress });
+  res.json({ token });
+});
