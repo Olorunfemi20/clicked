@@ -7,8 +7,10 @@ import morgan from 'morgan';
 import { sql } from 'drizzle-orm';
 import { db } from './db/index.js';
 import { authRouter } from './routes/auth.js';
+import { conversationsRouter } from './routes/conversations.js';
 import { requireAuth } from './middleware/auth.js';
 import { socketAuthMiddleware, type AuthSocket } from './middleware/socketAuth.js';
+import { registerMessagingHandlers } from './socket/messaging.js';
 
 dotenv.config();
 
@@ -32,6 +34,7 @@ app.get('/health', async (_req, res) => {
 });
 
 app.use('/auth', authRouter);
+app.use('/conversations', conversationsRouter);
 
 // Protected route example
 app.get('/me', requireAuth, (req, res) => {
@@ -42,6 +45,7 @@ io.use(socketAuthMiddleware);
 
 io.on('connection', (socket: AuthSocket) => {
   console.log('User connected:', socket.auth?.userId, socket.id);
+  registerMessagingHandlers(io, socket);
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.auth?.userId);
   });
