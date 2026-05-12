@@ -1,0 +1,137 @@
+#![cfg(test)]
+
+use super::*;
+use soroban_sdk::{
+    testutils::Address as _,
+    Address, Bytes, Env,
+};
+
+// ── Minimal mock token contract ───────────────────────────────────────────────
+
+mod mock_token {
+    use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+    #[contracttype]
+    pub enum Key {
+        Balance(Address),
+    }
+
+    #[contract]
+    pub struct MockToken;
+
+    #[contractimpl]
+    impl MockToken {
+        pub fn mint(env: Env, to: Address, amount: i128) {
+            let key = Key::Balance(to);
+            let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+            env.storage().persistent().set(&key, &(current + amount));
+        }
+
+        pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+            from.require_auth();
+            let from_key = Key::Balance(from.clone());
+            let to_key = Key::Balance(to.clone());
+            let from_bal: i128 = env.storage().persistent().get(&from_key).unwrap_or(0);
+            assert!(from_bal >= amount, "insufficient balance");
+            env.storage().persistent().set(&from_key, &(from_bal - amount));
+            let to_bal: i128 = env.storage().persistent().get(&to_key).unwrap_or(0);
+            env.storage().persistent().set(&to_key, &(to_bal + amount));
+        }
+
+        pub fn balance(env: Env, id: Address) -> i128 {
+            env.storage()
+                .persistent()
+                .get(&Key::Balance(id))
+                .unwrap_or(0)
+        }
+    }
+}
+
+use mock_token::MockTokenClient;
+
+fn setup(env: &Env) -> (Address, Address, Address, Address) {
+    let admin = Address::generate(env);
+    let sender = Address::generate(env);
+    let receiver = Address::generate(env);
+
+    // Deploy mock token
+    let token_id = env.register(mock_token::MockToken, ());
+    let token = MockTokenClient::new(env, &token_id);
+    token.mint(&sender, &1_000_000);
+
+    // Deploy transfer contract
+    let contract_id = env.register(TokenTransferContract, ());
+    let client = TokenTransferContractClient::new(env, &contract_id);
+    client.initialize(&admin, &token_id);
+
+    (contract_id, token_id, sender, receiver)
+}
+
+#[test]
+fn test_initialize() {
+    let env = Env::default();
+    let (contract_id, token_id, _sender, _receiver) = setup(&env);
+    let client = TokenTransferContractClient::new(&env, &contract_id);
+    assert_eq!(client.token_contract(), token_id);
+}
+
+#[test]
+#[should_panic(expected = "already initialized")]
+fn test_double_initialize_panics() {
+    let env = Env::default();
+    let (contract_id, token_id, _sender, _receiver) = setup(&env);
+    let client = TokenTransferContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &token_id);
+}
+
+#[test]
+fn test_transfer_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, token_id, sender, receiver) = setup(&env);
+    let client = TokenTransferContractClient::new(&env, &contract_id);
+    let token = MockTokenClient::new(&env, &token_id);
+
+    let memo = Bytes::from_slice(&env, b"msg-uuid-1234");
+    client.transfer(&sender, &receiver, &500_000, &memo);
+
+    assert_eq!(token.balance(&sender), 500_000);
+    assert_eq!(token.balance(&receiver), 500_000);
+}
+
+#[test]
+fn test_balance_query() {
+    let env = Env::default();
+    let (contract_id, _token_id, sender, _receiver) = setup(&env);
+    let client = TokenTransferContractClient::new(&env, &contract_id);
+
+    assert_eq!(client.balance(&sender), 1_000_000);
+}
+
+#[test]
+#[should_panic(expected = "amount must be positive")]
+fn test_transfer_zero_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, _token_id, sender, receiver) = setup(&env);
+    let client = TokenTransferContractClient::new(&env, &contract_id);
+    let memo = Bytes::from_slice(&env, b"");
+    client.transfer(&sender, &receiver, &0, &memo);
+}
+
+#[test]
+fn test_transfer_requires_sender_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, _token_id, sender, receiver) = setup(&env);
+    let client = TokenTransferContractClient::new(&env, &contract_id);
+    let memo = Bytes::from_slice(&env, b"ref");
+
+    client.transfer(&sender, &receiver, &100, &memo);
+
+    // Verify the sender's auth was required
+    let auths = env.auths();
+    assert!(auths.iter().any(|(addr, _)| *addr == sender));
+}
