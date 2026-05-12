@@ -4,15 +4,18 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import morgan from 'morgan';
-import { db } from './db/index.js';
 import { sql } from 'drizzle-orm';
+import { db } from './db/index.js';
+import { authRouter } from './routes/auth.js';
+import { requireAuth } from './middleware/auth.js';
+import { socketAuthMiddleware, type AuthSocket } from './middleware/socketAuth.js';
 
 dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: '*' }
+  cors: { origin: '*' },
 });
 
 app.use(cors());
@@ -28,14 +31,23 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+app.use('/auth', authRouter);
+
+// Protected route example
+app.get('/me', requireAuth, (req, res) => {
+  res.json({ user: req.auth });
+});
+
+io.use(socketAuthMiddleware);
+
+io.on('connection', (socket: AuthSocket) => {
+  console.log('User connected:', socket.auth?.userId, socket.id);
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+    console.log('User disconnected:', socket.auth?.userId);
   });
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env['PORT'] ?? 3001;
 httpServer.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
 });
