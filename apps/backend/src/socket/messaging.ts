@@ -3,6 +3,7 @@ import { and, eq, lt, desc } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { conversations, conversationMembers, messages } from '../db/schema.js';
 import type { AuthSocket } from '../middleware/socketAuth.js';
+import { redis, convCacheKey } from '../lib/redis.js';
 
 const PAGE_SIZE = 30;
 
@@ -60,6 +61,14 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
       .returning();
 
     io.to(conversationId).emit('new_message', message);
+
+    // Invalidate conversation-list cache for all members so next fetch is fresh
+    if (redis) {
+      const members = await db.query.conversationMembers.findMany({
+        where: eq(conversationMembers.conversationId, conversationId),
+      });
+      await Promise.allSettled(members.map((m) => redis!.del(convCacheKey(m.userId))));
+    }
   });
 
   // ── message_history ────────────────────────────────────────────────────────
@@ -175,6 +184,11 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
         .values(allMembers.map((uid) => ({ conversationId: conversation.id, userId: uid })));
 
       socket.emit('conversation_created', conversation);
+
+      // Invalidate conversation-list cache for all new members
+      if (redis) {
+        await Promise.allSettled(allMembers.map((uid) => redis!.del(convCacheKey(uid))));
+      }
     },
   );
 }
