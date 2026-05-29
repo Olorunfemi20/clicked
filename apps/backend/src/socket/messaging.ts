@@ -103,6 +103,53 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
     socket.emit('message_history', { conversationId, messages: history.reverse() });
   });
 
+  // ── message_read ───────────────────────────────────────────────────────────
+  // Payload: { conversationId: string; lastReadMessageId: string }
+  // Persists the caller's read position and broadcasts to the room.
+  socket.on(
+    'message_read',
+    async (payload: { conversationId: string; lastReadMessageId: string }) => {
+      const { conversationId, lastReadMessageId } = payload;
+
+      const membership = await db.query.conversationMembers.findFirst({
+        where: and(
+          eq(conversationMembers.conversationId, conversationId),
+          eq(conversationMembers.userId, userId),
+        ),
+      });
+
+      if (!membership) {
+        socket.emit('error', { event: 'message_read', message: 'Not a member of this conversation' });
+        return;
+      }
+
+      // Ensure message exists in this conversation (prevents spoofed reads)
+      const message = await db.query.messages.findFirst({
+        where: and(
+          eq(messages.id, lastReadMessageId),
+          eq(messages.conversationId, conversationId),
+        ),
+      });
+
+      if (!message) {
+        socket.emit('error', { event: 'message_read', message: 'Message not found in conversation' });
+        return;
+      }
+
+      await db
+        .update(conversationMembers)
+        .set({ lastReadMessageId })
+        .where(
+          and(
+            eq(conversationMembers.conversationId, conversationId),
+            eq(conversationMembers.userId, userId),
+          ),
+        );
+
+      io.to(conversationId).emit('read_receipt', { userId, lastReadMessageId });
+    },
+  );
+
   // ── create_conversation ────────────────────────────────────────────────────
   // Payload: { type: 'dm'|'group'; name?: string; memberIds: string[] }
   // Creates a conversation and adds all members (including caller).

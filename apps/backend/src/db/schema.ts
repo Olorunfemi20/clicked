@@ -38,6 +38,9 @@ export const conversationMembers = pgTable('conversation_members', {
   userId: uuid('user_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
+  lastReadMessageId: uuid('last_read_message_id').references(() => messages.id, {
+    onDelete: 'set null',
+  }),
   joinedAt: timestamp('joined_at').notNull().defaultNow(),
 });
 
