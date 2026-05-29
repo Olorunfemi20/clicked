@@ -8,6 +8,7 @@ import { sql } from 'drizzle-orm';
 import { db } from './db/index.js';
 import { authRouter } from './routes/auth.js';
 import { conversationsRouter } from './routes/conversations.js';
+import { usersRouter } from './routes/users.js';
 import { requireAuth } from './middleware/auth.js';
 import { socketAuthMiddleware, type AuthSocket } from './middleware/socketAuth.js';
 import { registerMessagingHandlers } from './socket/messaging.js';
@@ -35,6 +36,7 @@ app.get('/health', async (_req, res) => {
 
 app.use('/auth', authRouter);
 app.use('/conversations', conversationsRouter);
+app.use('/users', usersRouter);
 
 // Protected route example
 app.get('/me', requireAuth, (req, res) => {
