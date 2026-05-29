@@ -1,0 +1,92 @@
+// Lightweight Soroban + Freighter helper for token_transfer calls
+// Expects the following env vars (optional):
+// - NEXT_PUBLIC_SOROBAN_RPC_URL
+// - NEXT_PUBLIC_NETWORK_PASSPHRASE
+// - NEXT_PUBLIC_TOKEN_TRANSFER_CONTRACT
+
+export async function transferToken(
+  recipient: string,
+  amount: number | string,
+  memo = ""
+): Promise<string> {
+  const freighter = await import("@stellar/freighter-api");
+  const stellar = await import("stellar-sdk");
+
+  const { SorobanRpc, xdr, TransactionBuilder, BASE_FEE, Contract, Networks, nativeToScVal } =
+    stellar as any;
+
+  const RPC_URL =
+    process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org";
+  const NETWORK_PASSPHRASE =
+    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE || Networks.TESTNET;
+  const CONTRACT_ID =
+    process.env.NEXT_PUBLIC_TOKEN_TRANSFER_CONTRACT ||
+    "REPLACE_WITH_TOKEN_TRANSFER_CONTRACT_ID";
+
+  const isConnected = await freighter.isConnected();
+  if (!isConnected) throw new Error("Freighter not installed or not connected");
+
+  const publicKey = await freighter.getPublicKey();
+
+  // Build contract call operation
+  const contract = new Contract(CONTRACT_ID);
+
+  const fromSc = nativeToScVal(publicKey, { type: "address" });
+  const toSc = nativeToScVal(recipient, { type: "address" });
+  const amountBigInt = BigInt(String(amount));
+  const amountSc = nativeToScVal(amountBigInt, { type: "i128" });
+  const memoSc = xdr.ScVal.scvSymbol(String(memo || ""));
+
+  const op = contract.call("transfer", fromSc, toSc, amountSc, memoSc);
+
+  const server = new SorobanRpc.Server(RPC_URL, { allowHttp: false });
+  const account = await server.getAccount(publicKey);
+
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(op)
+    .setTimeout(30)
+    .build();
+
+  const simResult = await server.simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(simResult)) {
+    throw new Error(String(simResult.error));
+  }
+
+  const prepared = SorobanRpc.assembleTransaction(tx, simResult).build();
+  const txXdr = prepared.toXDR();
+
+  const signedXdr = await freighter.signTransaction(txXdr, {
+    networkPassphrase: NETWORK_PASSPHRASE,
+  });
+
+  const { Transaction } = stellar as any;
+  const signedTx = new Transaction(signedXdr, NETWORK_PASSPHRASE);
+  const sendResult = await server.sendTransaction(signedTx);
+
+  if (sendResult.status === "ERROR") {
+    throw new Error(`Transaction failed: ${String(sendResult.errorResult || sendResult)}`);
+  }
+
+  const hash = sendResult.hash;
+
+  // Poll for final status
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const status = await server.getTransaction(hash);
+      if (status.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) return hash;
+      if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
+        throw new Error(`Transaction reverted: ${hash}`);
+      }
+    } catch (err) {
+      // keep polling until timeout
+    }
+  }
+
+  throw new Error(`Transaction not confirmed after timeout: ${hash}`);
+}
+
+export default transferToken;
