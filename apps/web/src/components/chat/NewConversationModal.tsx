@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const MAX_QUERY_LENGTH = 120;
 
 type SearchUser = {
   id: string;
@@ -13,7 +14,6 @@ type SearchUser = {
 type NewConversationModalProps = {
   open: boolean;
   token: string;
-  currentUserId: string | null;
   creating: boolean;
   onClose: () => void;
   onSelectUser: (user: SearchUser) => Promise<void>;
@@ -22,7 +22,6 @@ type NewConversationModalProps = {
 export function NewConversationModal({
   open,
   token,
-  currentUserId,
   creating,
   onClose,
   onSelectUser,
@@ -42,7 +41,9 @@ export function NewConversationModal({
     }
 
     const trimmed = query.trim();
-    if (!trimmed) {
+    const safeQuery = trimmed.slice(0, MAX_QUERY_LENGTH);
+
+    if (!safeQuery) {
       setResults([]);
       setError(null);
       setLoading(false);
@@ -54,7 +55,7 @@ export function NewConversationModal({
 
     const timeout = window.setTimeout(async () => {
       try {
-        const response = await fetch(`${API_URL}/users/search?q=${encodeURIComponent(trimmed)}`, {
+        const response = await fetch(`${API_URL}/users/search?q=${encodeURIComponent(safeQuery)}`, {
           headers: { Authorization: "Bearer " + token },
         });
 
@@ -76,11 +77,6 @@ export function NewConversationModal({
       window.clearTimeout(timeout);
     };
   }, [open, query, token]);
-
-  const filteredResults = useMemo(
-    () => results.filter((user) => user.id !== currentUserId),
-    [currentUserId, results],
-  );
 
   if (!open) {
     return null;
@@ -110,10 +106,10 @@ export function NewConversationModal({
         <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
           {loading ? <p className="text-sm text-slate-300">Searching...</p> : null}
           {error ? <p className="text-sm text-rose-300">{error}</p> : null}
-          {!loading && !error && query.trim() && filteredResults.length === 0 ? (
+          {!loading && !error && query.trim() && results.length === 0 ? (
             <p className="text-sm text-slate-400">No users found.</p>
           ) : null}
-          {filteredResults.map((user) => (
+          {results.map((user) => (
             <button
               key={user.id}
               type="button"

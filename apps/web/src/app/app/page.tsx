@@ -48,7 +48,7 @@ function buildTempId() {
 
 export default function AppPage() {
   const router = useRouter();
-  const { token, userId, clearToken } = useAuth();
+  const { token, clearToken } = useAuth();
   const socket = useSocket(token);
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -127,7 +127,6 @@ export default function AppPage() {
         const optimisticIndex = previous.findIndex(
           (entry) =>
             entry.status === "pending" &&
-            entry.senderId === message.senderId &&
             entry.content === message.content,
         );
 
@@ -148,14 +147,23 @@ export default function AppPage() {
 
       setSendError(error.message ?? "Failed to send message");
       setMessages((previous) => {
-        const failedIndex = [...previous].reverse().findIndex((entry) => entry.status === "pending");
-        if (failedIndex < 0) {
+        let index = -1;
+        for (let i = previous.length - 1; i >= 0; i -= 1) {
+          if (previous[i]?.status === "pending") {
+            index = i;
+            break;
+          }
+        }
+        if (index < 0) {
           return previous;
         }
 
-        const index = previous.length - failedIndex - 1;
         const next = [...previous];
-        next[index] = { ...next[index], status: "failed" };
+        const target = next[index];
+        if (!target) {
+          return previous;
+        }
+        next[index] = { ...target, status: "failed" };
         return next;
       });
     };
@@ -186,7 +194,6 @@ export default function AppPage() {
       setIsModalOpen(false);
       setIsCreatingConversation(false);
       setActiveConversationId(conversation.id);
-      router.push(`/app?conversationId=${conversation.id}`);
     };
 
     const handleError = (error: SocketError) => {
@@ -204,11 +211,24 @@ export default function AppPage() {
       socket.off("conversation_created", handleConversationCreated);
       socket.off("error", handleError);
     };
-  }, [router, socket]);
+  }, [socket]);
+
+  const getConversationDisplayName = useCallback((conversation: Conversation) => {
+    if (conversation.name) {
+      return conversation.name;
+    }
+
+    const members = conversation.members?.map((member) => member.user.username ?? member.user.id);
+    if (members && members.length > 0) {
+      return members.join(", ");
+    }
+
+    return "Conversation";
+  }, []);
 
   const sendMessage = useCallback(
     async (content: string) => {
-      if (!socket || !activeConversationId || !userId) {
+      if (!socket || !activeConversationId) {
         throw new Error("No active conversation");
       }
 
@@ -217,7 +237,7 @@ export default function AppPage() {
         id: tempId,
         tempId,
         conversationId: activeConversationId,
-        senderId: userId,
+        senderId: "self",
         content,
         createdAt: new Date().toISOString(),
         status: "pending",
@@ -227,7 +247,7 @@ export default function AppPage() {
       setMessages((previous) => [...previous, optimisticMessage]);
       socket.emit("send_message", { conversationId: activeConversationId, content });
     },
-    [activeConversationId, socket, userId],
+    [activeConversationId, socket],
   );
 
   const retryMessage = useCallback(
@@ -290,7 +310,7 @@ export default function AppPage() {
                       : "border-[#0F172A]/10 bg-white"
                   }`}
                 >
-                  {conversation.name ?? conversation.members?.map((member) => member.user.username ?? member.user.id).join(", ") ?? "Conversation"}
+                  {getConversationDisplayName(conversation)}
                 </button>
               </li>
             ))}
@@ -299,7 +319,9 @@ export default function AppPage() {
 
         <main className="flex flex-1 flex-col">
           <header className="border-b border-[#0F172A]/10 bg-white px-6 py-4">
-            <h2 className="text-base font-semibold">{activeConversation?.name ?? "Messages"}</h2>
+            <h2 className="text-base font-semibold">
+              {activeConversation ? getConversationDisplayName(activeConversation) : "Messages"}
+            </h2>
             {sendError ? <p className="mt-1 text-xs text-rose-600">{sendError}</p> : null}
             {newConversationError ? (
               <p className="mt-1 text-xs text-rose-600">{newConversationError}</p>
@@ -344,7 +366,6 @@ export default function AppPage() {
         <NewConversationModal
           open={isModalOpen}
           token={token}
-          currentUserId={userId}
           creating={isCreatingConversation}
           onClose={() => setIsModalOpen(false)}
           onSelectUser={createConversation}

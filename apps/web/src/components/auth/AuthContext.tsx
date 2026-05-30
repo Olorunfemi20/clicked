@@ -4,7 +4,6 @@ import { createContext } from "react";
 
 export type AuthContextValue = {
   token: string | null;
-  userId: string | null;
   loading: boolean;
   setToken: (token: string) => void;
   clearToken: () => void;

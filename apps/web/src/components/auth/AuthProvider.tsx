@@ -5,26 +5,8 @@ import { AuthContext } from "./AuthContext";
 
 const TOKEN_STORAGE_KEY = "clicked_token";
 
-function decodeUserId(token: string): string | null {
-  try {
-    const payloadPart = token.split(".")[1];
-    if (!payloadPart) {
-      return null;
-    }
-
-    const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-    const parsed = JSON.parse(window.atob(padded)) as { userId?: unknown };
-
-    return typeof parsed.userId === "string" ? parsed.userId : null;
-  } catch {
-    return null;
-  }
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setTokenState] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,12 +15,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const storedToken = window.localStorage.getItem(TOKEN_STORAGE_KEY);
-    if (storedToken) {
-      setTokenState(storedToken);
-      setUserId(decodeUserId(storedToken));
-    }
+    const frameId = window.requestAnimationFrame(() => {
+      if (storedToken) {
+        setTokenState(storedToken);
+      }
 
-    setLoading(false);
+      setLoading(false);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
   }, []);
 
   const setToken = useCallback((nextToken: string) => {
@@ -47,7 +34,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     setTokenState(nextToken);
-    setUserId(decodeUserId(nextToken));
   }, []);
 
   const clearToken = useCallback(() => {
@@ -56,18 +42,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     setTokenState(null);
-    setUserId(null);
   }, []);
 
   const value = useMemo(
     () => ({
       token,
-      userId,
       loading,
       setToken,
       clearToken,
     }),
-    [clearToken, loading, setToken, token, userId],
+    [clearToken, loading, setToken, token],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
