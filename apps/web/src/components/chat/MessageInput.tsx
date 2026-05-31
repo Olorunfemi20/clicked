@@ -1,22 +1,28 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import type { Socket } from "socket.io-client";
 
 const MAX_CHARS = 2000;
 const SOFT_COUNT_THRESHOLD = 1800;
 const MAX_LINES = 4;
 const LINE_HEIGHT = 24;
+const TYPING_STOP_DELAY = 2000;
 
 type MessageInputProps = {
   disabled: boolean;
   isSending: boolean;
   onSend: (message: string) => Promise<void>;
+  socket?: Socket | null;
+  conversationId?: string;
 };
 
-export function MessageInput({ disabled, isSending, onSend }: MessageInputProps) {
+export function MessageInput({ disabled, isSending, onSend, socket, conversationId }: MessageInputProps) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef = useRef(false);
 
   const showCharacterCount = value.length > SOFT_COUNT_THRESHOLD;
   const remainingChars = MAX_CHARS - value.length;
@@ -43,12 +49,31 @@ export function MessageInput({ disabled, isSending, onSend }: MessageInputProps)
     setValue(nextValue);
     setError(null);
     requestAnimationFrame(resizeTextarea);
+
+    if (socket && conversationId) {
+      if (!isTypingRef.current) {
+        isTypingRef.current = true;
+        socket.emit("typing_start", { conversationId });
+      }
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => {
+        isTypingRef.current = false;
+        socket.emit("typing_stop", { conversationId });
+      }, TYPING_STOP_DELAY);
+    }
   };
 
   const submit = async () => {
     const trimmed = value.trim();
     if (!trimmed || disabled || isSending) {
       return;
+    }
+
+    // Stop typing indicator on send
+    if (socket && conversationId && isTypingRef.current) {
+      isTypingRef.current = false;
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      socket.emit("typing_stop", { conversationId });
     }
 
     setError(null);

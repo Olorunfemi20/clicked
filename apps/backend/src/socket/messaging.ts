@@ -191,6 +191,48 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
       }
     },
   );
+  // ── typing_start ────────────────────────────────────────────────────────────
+  // Payload: { conversationId: string }
+  // Broadcasts to the room excluding the sender. No DB write.
+  socket.on('typing_start', async (payload: { conversationId: string }) => {
+    const { conversationId } = payload;
+
+    const membership = await db.query.conversationMembers.findFirst({
+      where: and(
+        eq(conversationMembers.conversationId, conversationId),
+        eq(conversationMembers.userId, userId),
+      ),
+    });
+
+    if (!membership) {
+      socket.emit('error', { event: 'typing_start', message: 'Not a member of this conversation' });
+      return;
+    }
+
+    socket.to(conversationId).emit('typing_start', { conversationId, userId });
+  });
+
+  // ── typing_stop ─────────────────────────────────────────────────────────────
+  // Payload: { conversationId: string }
+  // Broadcasts to the room excluding the sender. No DB write.
+  socket.on('typing_stop', async (payload: { conversationId: string }) => {
+    const { conversationId } = payload;
+
+    const membership = await db.query.conversationMembers.findFirst({
+      where: and(
+        eq(conversationMembers.conversationId, conversationId),
+        eq(conversationMembers.userId, userId),
+      ),
+    });
+
+    if (!membership) {
+      socket.emit('error', { event: 'typing_stop', message: 'Not a member of this conversation' });
+      return;
+    }
+
+    socket.to(conversationId).emit('typing_stop', { conversationId, userId });
+  });
+
   // ── ask_assistant ──────────────────────────────────────────────────────────
   // Payload: { conversationId: string; content: string }
   // Forwards to AI agent and posts reply from reserved assistant user.

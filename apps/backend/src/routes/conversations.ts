@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import type { IRouter } from 'express';
-import { and, asc, desc, eq, lt, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, lt, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { conversationMembers, messages, tokenTransfers } from '../db/schema.js';
+import { conversationMembers, conversations, messages, tokenTransfers } from '../db/schema.js';
 import { requireAuth, type AuthRequest } from '../middleware/auth.js';
 import { redis, CONV_CACHE_TTL, convCacheKey } from '../lib/redis.js';
 
@@ -53,7 +53,23 @@ conversationsRouter.get('/', async (req: AuthRequest, res) => {
     },
   });
 
-  const result = memberships.map((m) => m.conversation);
+  // Single subquery for message counts — no N+1
+  const conversationIds = memberships.map((m) => m.conversationId);
+  const countRows =
+    conversationIds.length > 0
+      ? await db
+          .select({ conversationId: messages.conversationId, count: count() })
+          .from(messages)
+          .where(sql`${messages.conversationId} = ANY(ARRAY[${sql.join(conversationIds.map((id) => sql`${id}::uuid`), sql`, `)}])`)
+          .groupBy(messages.conversationId)
+      : [];
+
+  const countMap = new Map(countRows.map((r) => [r.conversationId, r.count]));
+
+  const result = memberships.map((m) => ({
+    ...m.conversation,
+    messageCount: countMap.get(m.conversationId) ?? 0,
+  }));
 
   // Cache write with 30-second TTL
   if (redis) {

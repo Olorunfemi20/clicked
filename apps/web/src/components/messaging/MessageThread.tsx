@@ -1,66 +1,25 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { ChatMessage } from "@/hooks/useMessageHistory";
+import type { Socket } from "socket.io-client";
 
 export interface MessageThreadProps {
-  /**
-   * Messages in oldest-first order. The component renders them top-to-bottom
-   * and treats prepended items (lower index than before) as "older messages".
-   */
   messages: ChatMessage[];
-  /**
-   * True while the older-messages fetch is in flight. Drives the top spinner.
-   */
   loadingOlder: boolean;
-  /**
-   * `true` when the server returned an empty page, meaning the user has
-   * scrolled all the way to the start of the thread.
-   */
   hasReachedStart: boolean;
-  /**
-   * Called when the user scrolls to (or near) the top of the list. The
-   * caller is expected to dispatch a `message_history` socket event with
-   * the oldest visible message id as the `before` cursor. The component
-   * debounces by only calling once per "near-top" entry — it will not
-   * fire again until the user scrolls down and back up.
-   */
   onLoadOlder: () => void;
-  /**
-   * How many pixels from the top of the scroll container counts as
-   * "near the top". Defaults to 120, which works well for both desktop
-   * and mobile thumbs.
-   */
   triggerDistance?: number;
-  /**
-   * Render override for a single message row. Defaults to a minimal
-   * `<div>` that prints sender + content + relative timestamp.
-   */
   renderMessage?: (message: ChatMessage) => React.ReactNode;
+  /** Socket instance for listening to typing events */
+  socket?: Socket | null;
+  /** The current user's id — used to suppress own typing indicator */
+  currentUserId?: string;
+  /** The conversation being viewed */
+  conversationId?: string;
 }
 
-/**
- * Issue #32 — message thread with top-anchored infinite scroll.
- *
- * The interesting work happens in two places:
- *
- * - `onScroll` watches `scrollTop` against `triggerDistance`. The first
- *   time it crosses the threshold we call `onLoadOlder` and arm a guard
- *   so we don't double-fire on every pixel of scroll. The guard is
- *   released the moment `loadingOlder` flips back to `false` after the
- *   user scrolls *down* (away from the trigger band) — that combination
- *   matches the "scrolled to top once, then again" UX.
- *
- * - The `useLayoutEffect` captures `scrollHeight` *before* the DOM
- *   commit and, after the prepend, restores `scrollTop` so the user
- *   stays anchored on the same message instead of being yanked to the
- *   top. This is the canonical fix for scroll jumps on prepend.
- *
- * No external dependency. Pair with `useMessageHistory` (or anything
- * that vends `messages` + `loadingOlder` + `hasReachedStart`) to wire
- * to the backend's `message_history` socket event.
- */
 export function MessageThread({
   messages,
   loadingOlder,
@@ -68,11 +27,74 @@ export function MessageThread({
   onLoadOlder,
   triggerDistance = 120,
   renderMessage,
+  socket,
+  currentUserId,
+  conversationId,
 }: MessageThreadProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const previousHeightRef = useRef<number | null>(null);
   const previousFirstIdRef = useRef<string | null>(null);
   const triggeredRef = useRef(false);
+
+  // Typing indicator state: set of userIds currently typing
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const autoHideTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    if (!socket || !conversationId) return;
+
+    function addTyping(userId: string) {
+      if (userId === currentUserId) return;
+      // Clear existing auto-hide timer
+      const existing = autoHideTimers.current.get(userId);
+      if (existing) clearTimeout(existing);
+      setTypingUsers((prev) => new Set([...prev, userId]));
+      // Auto-hide after 3s if no typing_stop received
+      autoHideTimers.current.set(
+        userId,
+        setTimeout(() => removeTyping(userId), 3000),
+      );
+    }
+
+    function removeTyping(userId: string) {
+      const timer = autoHideTimers.current.get(userId);
+      if (timer) clearTimeout(timer);
+      autoHideTimers.current.delete(userId);
+      setTypingUsers((prev) => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    }
+
+    function onTypingStart(payload: { conversationId: string; userId: string }) {
+      if (payload.conversationId !== conversationId) return;
+      addTyping(payload.userId);
+    }
+
+    function onTypingStop(payload: { conversationId: string; userId: string }) {
+      if (payload.conversationId !== conversationId) return;
+      removeTyping(payload.userId);
+    }
+
+    function onNewMessage(msg: { conversationId: string }) {
+      if (msg.conversationId !== conversationId) return;
+      // Hide all typing indicators when a new message arrives
+      autoHideTimers.current.forEach((t) => clearTimeout(t));
+      autoHideTimers.current.clear();
+      setTypingUsers(new Set());
+    }
+
+    socket.on("typing_start", onTypingStart);
+    socket.on("typing_stop", onTypingStop);
+    socket.on("new_message", onNewMessage);
+
+    return () => {
+      socket.off("typing_start", onTypingStart);
+      socket.off("typing_stop", onTypingStop);
+      socket.off("new_message", onNewMessage);
+    };
+  }, [socket, conversationId, currentUserId]);
 
   // Capture scroll metrics BEFORE the next paint so we can restore scrollTop
   // after older messages are prepended.
@@ -148,6 +170,12 @@ export function MessageThread({
         ) : (
           <DefaultMessageRow key={message.id} message={message} />
         ),
+      )}
+
+      {typingUsers.size > 0 && (
+        <div aria-live="polite" aria-atomic="true" className="px-1 text-xs text-gray-500 italic">
+          {[...typingUsers].join(", ")} {typingUsers.size === 1 ? "is" : "are"} typing…
+        </div>
       )}
     </div>
   );
