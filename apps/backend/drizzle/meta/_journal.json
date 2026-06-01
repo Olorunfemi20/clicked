@@ -36,6 +36,13 @@
       "when": 1780241403332,
       "tag": "0004_premium_mattie_franklin",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780269667000,
+      "tag": "0005_soft_deleted_messages",
+      "breakpoints": true
     }
   ]
 }

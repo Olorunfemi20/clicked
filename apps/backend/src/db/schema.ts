@@ -58,6 +58,7 @@ export const messages = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     content: text('content').notNull(),
     createdAt: timestamp('created_at').notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at'),
   },
   (table) => [
     index('messages_content_search_idx').using('gin', sql`to_tsvector('english', ${table.content})`),

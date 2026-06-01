@@ -10,6 +10,7 @@ import { socketAuthMiddleware, type AuthSocket } from './middleware/socketAuth.j
 import { registerMessagingHandlers } from './socket/messaging.js';
 import { app } from './app.js';
 import { redis as appRedis } from './lib/redis.js';
+import { setSocketServer } from './lib/socket.js';
 import { setOnline, setOffline, refreshPresence } from './services/presence.js';
 import {
   buildRpcFetcher,
@@ -22,6 +23,8 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*' },
 });
+
+setSocketServer(io);
 
 io.use(socketAuthMiddleware);
 

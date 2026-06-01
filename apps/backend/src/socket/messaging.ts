@@ -3,7 +3,9 @@ import { and, eq, lt, desc, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { conversations, conversationMembers, messages } from '../db/schema.js';
 import type { AuthSocket } from '../middleware/socketAuth.js';
-import { redis, convCacheKey } from '../lib/redis.js';
+import { invalidateConversationCaches } from '../lib/conversationCache.js';
+import { serializeMessage } from '../lib/messages.js';
+import { redis } from '../lib/redis.js';
 
 const PAGE_SIZE = 30;
 
@@ -62,13 +64,12 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
 
     io.to(conversationId).emit('new_message', message);
 
-    // Invalidate conversation-list cache for all members so next fetch is fresh
-    if (redis) {
-      const members = await db.query.conversationMembers.findMany({
-        where: eq(conversationMembers.conversationId, conversationId),
-      });
-      await Promise.allSettled(members.map((m) => redis!.del(convCacheKey(m.userId))));
-    }
+    const members = await db.query.conversationMembers.findMany({
+      where: eq(conversationMembers.conversationId, conversationId),
+      columns: { userId: true },
+    });
+
+    await invalidateConversationCaches(members.map((member) => member.userId));
   });
 
   // ── message_history ────────────────────────────────────────────────────────
@@ -109,7 +110,10 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
       with: { sender: { columns: { id: true, username: true, avatarUrl: true } } },
     });
 
-    socket.emit('message_history', { conversationId, messages: history.reverse() });
+    socket.emit('message_history', {
+      conversationId,
+      messages: history.reverse().map((message) => serializeMessage(message)),
+    });
   });
 
   // ── message_read ───────────────────────────────────────────────────────────
@@ -185,10 +189,7 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
 
       socket.emit('conversation_created', conversation);
 
-      // Invalidate conversation-list cache for all new members
-      if (redis) {
-        await Promise.allSettled(allMembers.map((uid) => redis!.del(convCacheKey(uid))));
-      }
+      await invalidateConversationCaches(allMembers);
     },
   );
   // ── typing_start ────────────────────────────────────────────────────────────
@@ -315,13 +316,13 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
         .returning();
 
       io.to(conversationId).emit('new_message', replyMessage);
-      
-      if (redis) {
-        const members = await db.query.conversationMembers.findMany({
-          where: eq(conversationMembers.conversationId, conversationId),
-        });
-        await Promise.allSettled(members.map((m) => redis!.del(convCacheKey(m.userId))));
-      }
+
+      const members = await db.query.conversationMembers.findMany({
+        where: eq(conversationMembers.conversationId, conversationId),
+        columns: { userId: true },
+      });
+
+      await invalidateConversationCaches(members.map((member) => member.userId));
 
     } catch (err) {
       console.error('ask_assistant error:', err);

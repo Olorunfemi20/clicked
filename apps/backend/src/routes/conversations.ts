@@ -5,12 +5,42 @@ import { db } from '../db/index.js';
 import { conversationMembers, conversations, messages, tokenTransfers } from '../db/schema.js';
 import { requireAuth, type AuthRequest } from '../middleware/auth.js';
 import { redis, CONV_CACHE_TTL, convCacheKey } from '../lib/redis.js';
+import { invalidateConversationCaches } from '../lib/conversationCache.js';
+import { serializeMessage } from '../lib/messages.js';
 
 export const conversationsRouter: IRouter = Router();
 
 conversationsRouter.use(requireAuth);
 
 const SEARCH_RESULT_LIMIT = 20;
+
+const conversationRelations = {
+  members: {
+    with: {
+      user: {
+        columns: { id: true, username: true, avatarUrl: true },
+        with: { wallets: { columns: { address: true, isPrimary: true } } },
+      },
+    },
+  },
+  messages: {
+    orderBy: desc(messages.createdAt),
+    limit: 1,
+    with: { sender: { columns: { id: true, username: true, avatarUrl: true } } },
+  },
+} as const;
+
+type ConversationPayload = {
+  messages?: Array<ReturnType<typeof serializeMessage>>;
+  [key: string]: unknown;
+};
+
+function serializeConversation<T extends ConversationPayload>(conversation: T): T {
+  return {
+    ...conversation,
+    messages: (conversation.messages ?? []).map((message) => serializeMessage(message)),
+  };
+}
 
 // List all conversations the authenticated user belongs to
 // Pass ?archived=true to include archived conversations
@@ -32,31 +62,12 @@ conversationsRouter.get('/', async (req: AuthRequest, res) => {
     }
   }
 
-  const memberships = await db.query.conversationMembers.findMany({
-    where: and(
-      eq(conversationMembers.userId, userId),
-      showArchived ? undefined : eq(conversationMembers.isArchived, false),
-    ),
+  const memberships = (await db.query.conversationMembers.findMany({
+    where: eq(conversationMembers.userId, userId),
     with: {
-      conversation: {
-        with: {
-          members: {
-            with: {
-              user: {
-                columns: { id: true, username: true, avatarUrl: true },
-                with: { wallets: { columns: { address: true, isPrimary: true } } },
-              },
-            },
-          },
-          messages: {
-            orderBy: desc(messages.createdAt),
-            limit: 1,
-            with: { sender: { columns: { id: true, username: true, avatarUrl: true } } },
-          },
-        },
-      },
+      conversation: conversationRelations as never,
     },
-  });
+  })) as Array<{ conversation: ConversationPayload }>;
 
   // Single subquery for message counts — no N+1
   const conversationIds = memberships.map((m) => m.conversationId);
@@ -88,6 +99,40 @@ conversationsRouter.get('/', async (req: AuthRequest, res) => {
   }
 
   res.json(result);
+});
+
+conversationsRouter.get('/:id', async (req: AuthRequest, res) => {
+  const userId = req.auth!.userId;
+  const conversationId = req.params['id'] as string | undefined;
+
+  if (!conversationId) {
+    res.status(400).json({ error: 'Conversation id is required' });
+    return;
+  }
+
+  const conversation = (await db.query.conversations.findFirst({
+    where: eq(conversations.id, conversationId),
+    with: conversationRelations as never,
+  })) as ConversationPayload | undefined;
+
+  if (!conversation) {
+    res.status(404).json({ error: 'Conversation not found' });
+    return;
+  }
+
+  const membership = await db.query.conversationMembers.findFirst({
+    where: and(
+      eq(conversationMembers.conversationId, conversationId),
+      eq(conversationMembers.userId, userId),
+    ),
+  });
+
+  if (!membership) {
+    res.status(403).json({ error: 'Not a member of this conversation' });
+    return;
+  }
+
+  res.json(serializeConversation(conversation));
 });
 
 // #14 — GET /conversations/:id/messages
@@ -214,6 +259,7 @@ conversationsRouter.get('/:id/search', async (req: AuthRequest, res) => {
       ts_rank_cd(to_tsvector('english', ${messages.content}), search_query.query) AS "rank"
     FROM ${messages}, search_query
     WHERE ${messages.conversationId} = ${conversationId}
+      AND ${messages.deletedAt} IS NULL
       AND search_query.query @@ to_tsvector('english', ${messages.content})
     ORDER BY "rank" DESC, ${messages.createdAt} DESC
     LIMIT ${SEARCH_RESULT_LIMIT}
@@ -375,4 +421,58 @@ conversationsRouter.get('/:id/transfers', async (req: AuthRequest, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to retrieve transfers' });
   }
+});
+
+conversationsRouter.delete('/:id/leave', async (req: AuthRequest, res) => {
+  const userId = req.auth!.userId;
+  const conversationId = req.params['id'] as string | undefined;
+
+  if (!conversationId) {
+    res.status(400).json({ error: 'Conversation id is required' });
+    return;
+  }
+
+  const conversation = await db.query.conversations.findFirst({
+    where: eq(conversations.id, conversationId),
+    columns: { id: true, type: true },
+  });
+
+  if (!conversation) {
+    res.status(404).json({ error: 'Conversation not found' });
+    return;
+  }
+
+  if (conversation.type === 'dm') {
+    res.status(400).json({ error: 'DM conversations cannot be left' });
+    return;
+  }
+
+  const membership = await db.query.conversationMembers.findFirst({
+    where: and(
+      eq(conversationMembers.conversationId, conversationId),
+      eq(conversationMembers.userId, userId),
+    ),
+  });
+
+  if (!membership) {
+    res.status(404).json({ error: 'Conversation membership not found' });
+    return;
+  }
+
+  const members = await db.query.conversationMembers.findMany({
+    where: eq(conversationMembers.conversationId, conversationId),
+    columns: { userId: true },
+  });
+
+  if (members.length === 1) {
+    await db.delete(conversations).where(eq(conversations.id, conversationId));
+  } else {
+    await db
+      .delete(conversationMembers)
+      .where(and(eq(conversationMembers.conversationId, conversationId), eq(conversationMembers.userId, userId)));
+  }
+
+  await invalidateConversationCaches(members.map((member) => member.userId));
+
+  res.status(204).send();
 });

@@ -48,8 +48,20 @@ vi.mock('../db/index.js', () => ({
   },
 }));
 
-vi.mock('../db/schema.js', () => ({ conversationMembers: {}, messages: { createdAt: 'createdAt' } }));
-vi.mock('drizzle-orm', () => ({ eq: vi.fn(), desc: vi.fn(), and: vi.fn(), sql: Object.assign(vi.fn(), { join: vi.fn() }), count: vi.fn(), lt: vi.fn() }));
+vi.mock('../db/schema.js', () => ({
+  conversations: { id: 'id', type: 'type' },
+  conversationMembers: { conversationId: 'conversationId', userId: 'userId' },
+  messages: {
+    id: 'id',
+    conversationId: 'conversationId',
+    senderId: 'senderId',
+    content: 'content',
+    createdAt: 'createdAt',
+    deletedAt: 'deletedAt',
+  },
+  tokenTransfers: {},
+}));
+vi.mock('drizzle-orm', () => ({ eq: vi.fn(), desc: vi.fn(), and: vi.fn(), sql: vi.fn() }));
 
 // ── Auth middleware mock: always passes with test userId ───────────────────
 
@@ -94,8 +106,8 @@ describe('GET /conversations — Redis caching', () => {
 
   it('queries DB and writes to cache on cache miss', async () => {
     mockGet.mockResolvedValue(null); // cache miss
-    const conv = { id: 'conv-2', type: 'group' };
-    mockFindMany.mockResolvedValue([{ conversationId: conv.id, isMuted: false, isArchived: false, conversation: conv }]);
+    const dbResult = [{ id: 'conv-2', type: 'group', messages: [] }];
+    mockFindMany.mockResolvedValue(dbResult.map((c) => ({ conversation: c })));
     mockSetex.mockResolvedValue('OK');
 
     const res = await request(makeApp()).get('/conversations');
