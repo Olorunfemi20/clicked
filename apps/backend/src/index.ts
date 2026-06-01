@@ -32,12 +32,18 @@ io.on('connection', async (socket: AuthSocket) => {
   const userId = socket.auth!.userId;
   console.log('User connected:', userId, socket.id);
   
+  // Auto-join all conversation rooms so the socket receives new_message events
+  // for every conversation the user belongs to (needed for unread badge tracking).
+  const memberships = await db.query.conversationMembers.findMany({
+    where: eq(conversationMembers.userId, userId),
+    columns: { conversationId: true },
+  });
+  for (const m of memberships) {
+    await socket.join(m.conversationId);
+  }
+
   if (appRedis) {
     await setOnline(appRedis, userId, socket.id);
-    const memberships = await db.query.conversationMembers.findMany({
-      where: eq(conversationMembers.userId, userId),
-      columns: { conversationId: true },
-    });
     for (const m of memberships) {
       io.to(m.conversationId).emit('user_online', { userId });
     }
