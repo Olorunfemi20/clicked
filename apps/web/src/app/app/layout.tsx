@@ -1,8 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useWallet } from "@/contexts/WalletContext";
 
 // Custom premium SVG Icons to avoid dependency weight
 const LogoIcon = () => (
@@ -106,6 +107,23 @@ const ProposalsIcon = () => (
   </svg>
 );
 
+const WalletIcon = () => (
+  <svg
+    className="w-5 h-5"
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M20 12V8C20 5.79086 18.2091 4 16 4H4C2.89543 4 2 4.89543 2 6V18C2 19.1046 2.89543 20 4 20H16C18.2091 20 20 18.2091 20 16V14M22 12H18C16.8954 12 16 12.8954 16 14C16 15.1046 16.8954 16 18 16H22"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 interface NavItemProps {
   href: string;
   label: string;
@@ -138,15 +156,33 @@ const NavItem: React.FC<NavItemProps> = ({ href, label, icon, active }) => {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { publicKey, connect, disconnect } = useWallet();
+  const [isConnecting, setIsConnecting] = useState(false);
 
-  // Simulated connected Stellar wallet address
-  const walletAddress = "GB7X...5W4N";
+  const handleWalletAction = async () => {
+    if (publicKey) {
+      disconnect();
+    } else {
+      setIsConnecting(true);
+      try {
+        await connect();
+      } catch (err) {
+        console.error("Wallet connection failed:", err);
+      } finally {
+        setIsConnecting(false);
+      }
+    }
+  };
 
   const navItems = [
     { href: "/app/messages", label: "Messages", icon: <MessagesIcon /> },
     { href: "/app/treasury", label: "Treasury", icon: <TreasuryIcon /> },
     { href: "/app/proposals", label: "Proposals", icon: <ProposalsIcon /> },
   ];
+
+  const displayAddress = publicKey
+    ? `${publicKey.slice(0, 4)}...${publicKey.slice(-4)}`
+    : "";
 
   return (
     <div className="flex min-h-screen bg-background text-foreground font-sans">
@@ -176,25 +212,41 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Connected Wallet Section at bottom */}
-        <div className="relative flex items-center gap-3 p-2 md:p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] shadow-inner transition-all duration-300 hover:bg-white/[0.04]">
-          {/* Avatar / Identicon with glowing status dot */}
-          <div className="relative flex-shrink-0">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-accent to-accent-light flex items-center justify-center font-bold text-xs text-white shadow-md">
-              C
+        {publicKey ? (
+          <button
+            onClick={handleWalletAction}
+            className="w-full relative flex items-center gap-3 p-2 md:p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] shadow-inner transition-all duration-300 hover:bg-white/[0.05] hover:border-accent/30 text-left group"
+          >
+            {/* Avatar with glowing status dot */}
+            <div className="relative flex-shrink-0">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-accent to-accent-light flex items-center justify-center font-bold text-xs text-white shadow-md">
+                C
+              </div>
+              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-card rounded-full shadow-[0_0_8px_#10b981]" />
             </div>
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-card rounded-full shadow-[0_0_8px_#10b981]" />
-          </div>
 
-          {/* Wallet Address Label */}
-          <div className="hidden md:flex flex-col min-w-0">
-            <span className="text-[10px] uppercase font-semibold text-foreground/40 tracking-wider">
-              Connected Wallet
+            {/* Wallet Address Label */}
+            <div className="hidden md:flex flex-col min-w-0">
+              <span className="text-[10px] uppercase font-semibold text-foreground/40 tracking-wider group-hover:text-accent-light transition-colors">
+                Connected
+              </span>
+              <span className="text-xs font-mono font-medium text-foreground/80 truncate">
+                {displayAddress}
+              </span>
+            </div>
+          </button>
+        ) : (
+          <button
+            onClick={handleWalletAction}
+            disabled={isConnecting}
+            className="w-full flex items-center justify-center gap-2.5 px-3 py-3 rounded-2xl bg-accent hover:bg-accent-light disabled:bg-accent/40 text-white text-xs font-semibold shadow-md shadow-accent/20 transition-all duration-300 active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+          >
+            <WalletIcon />
+            <span className="hidden md:inline">
+              {isConnecting ? "Connecting..." : "Connect Wallet"}
             </span>
-            <span className="text-xs font-mono font-medium text-foreground/80 truncate">
-              {walletAddress}
-            </span>
-          </div>
-        </div>
+          </button>
+        )}
       </aside>
 
       {/* Main Content Area */}

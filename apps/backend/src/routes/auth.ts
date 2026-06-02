@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { Router } from 'express';
 import type { Request, Response, IRouter } from 'express';
+import rateLimit, { type RateLimitRequestHandler } from 'express-rate-limit';
 import { Keypair } from '@stellar/stellar-sdk';
 import { db } from '../db/index.js';
 import { users, wallets } from '../db/schema.js';
@@ -7,12 +9,35 @@ import { eq } from 'drizzle-orm';
 import { createNonce, consumeNonce } from '../lib/nonce.js';
 import { signToken } from '../lib/jwt.js';
 import { validate } from '../middleware/validate.js';
-import { ChallengeSchema, VerifySchema, type ChallengeBody, type VerifyBody } from '../schemas/auth.schemas.js';
+import {
+  ChallengeSchema,
+  VerifySchema,
+  type ChallengeBody,
+  type VerifyBody,
+} from '../schemas/auth.schemas.js';
 
 export const authRouter: IRouter = Router();
 
+const rateLimitedResponse = { error: 'Too many requests' };
+
+export const challengeLimiter: RateLimitRequestHandler = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: rateLimitedResponse,
+});
+
+export const verifyLimiter: RateLimitRequestHandler = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: rateLimitedResponse,
+});
+
 // Step 1: client requests a challenge nonce for a wallet address
-authRouter.post('/challenge', validate(ChallengeSchema), (req: Request, res: Response) => {
+authRouter.post('/challenge', challengeLimiter, validate(ChallengeSchema), (req: Request, res: Response) => {
   const { walletAddress } = req.body as ChallengeBody;
 
   const nonce = createNonce(walletAddress);
@@ -22,7 +47,7 @@ authRouter.post('/challenge', validate(ChallengeSchema), (req: Request, res: Res
 });
 
 // Step 2: client signs the message and submits the signature
-authRouter.post('/verify', validate(VerifySchema), async (req: Request, res: Response) => {
+authRouter.post('/verify', verifyLimiter, validate(VerifySchema), async (req: Request, res: Response) => {
   const { walletAddress, signature, nonce } = req.body as VerifyBody;
 
   // Validate and consume nonce
@@ -35,11 +60,19 @@ authRouter.post('/verify', validate(VerifySchema), async (req: Request, res: Res
   // Verify Stellar keypair signature
   try {
     const message = `Sign in to Clicked\nWallet: ${walletAddress}\nNonce: ${nonce}`;
-    const messageBytes = Buffer.from(message);
-    const signatureBytes = Buffer.from(signature, 'hex');
+    const rawMessageBytes = Buffer.from(message);
+    const freighterMessageBytes = createHash('sha256')
+      .update(`Stellar Signed Message:\n${message}`)
+      .digest();
     const keypair = Keypair.fromPublicKey(walletAddress);
+    const hexSignatureBytes = Buffer.from(signature, 'hex');
+    const base64SignatureBytes = Buffer.from(signature, 'base64');
 
-    if (!keypair.verify(messageBytes, signatureBytes)) {
+    const isValidSignature =
+      keypair.verify(rawMessageBytes, hexSignatureBytes) ||
+      keypair.verify(freighterMessageBytes, base64SignatureBytes);
+
+    if (!isValidSignature) {
       res.status(401).json({ error: 'Signature verification failed' });
       return;
     }

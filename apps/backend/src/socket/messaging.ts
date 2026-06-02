@@ -1,9 +1,11 @@
 import type { Server } from 'socket.io';
-import { and, eq, lt, desc } from 'drizzle-orm';
+import { and, eq, lt, desc, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { conversations, conversationMembers, messages } from '../db/schema.js';
 import type { AuthSocket } from '../middleware/socketAuth.js';
-import { redis, convCacheKey } from '../lib/redis.js';
+import { invalidateConversationCaches } from '../lib/conversationCache.js';
+import { serializeMessage } from '../lib/messages.js';
+import { redis } from '../lib/redis.js';
 
 const PAGE_SIZE = 30;
 
@@ -62,13 +64,12 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
 
     io.to(conversationId).emit('new_message', message);
 
-    // Invalidate conversation-list cache for all members so next fetch is fresh
-    if (redis) {
-      const members = await db.query.conversationMembers.findMany({
-        where: eq(conversationMembers.conversationId, conversationId),
-      });
-      await Promise.allSettled(members.map((m) => redis!.del(convCacheKey(m.userId))));
-    }
+    const members = await db.query.conversationMembers.findMany({
+      where: eq(conversationMembers.conversationId, conversationId),
+      columns: { userId: true },
+    });
+
+    await invalidateConversationCaches(members.map((member) => member.userId));
   });
 
   // ── message_history ────────────────────────────────────────────────────────
@@ -109,7 +110,10 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
       with: { sender: { columns: { id: true, username: true, avatarUrl: true } } },
     });
 
-    socket.emit('message_history', { conversationId, messages: history.reverse() });
+    socket.emit('message_history', {
+      conversationId,
+      messages: history.reverse().map((message) => serializeMessage(message)),
+    });
   });
 
   // ── message_read ───────────────────────────────────────────────────────────
@@ -128,20 +132,23 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
       });
 
       if (!membership) {
-        socket.emit('error', { event: 'message_read', message: 'Not a member of this conversation' });
+        socket.emit('error', {
+          event: 'message_read',
+          message: 'Not a member of this conversation',
+        });
         return;
       }
 
       // Ensure message exists in this conversation (prevents spoofed reads)
       const message = await db.query.messages.findFirst({
-        where: and(
-          eq(messages.id, lastReadMessageId),
-          eq(messages.conversationId, conversationId),
-        ),
+        where: and(eq(messages.id, lastReadMessageId), eq(messages.conversationId, conversationId)),
       });
 
       if (!message) {
-        socket.emit('error', { event: 'message_read', message: 'Message not found in conversation' });
+        socket.emit('error', {
+          event: 'message_read',
+          message: 'Message not found in conversation',
+        });
         return;
       }
 
@@ -185,10 +192,146 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
 
       socket.emit('conversation_created', conversation);
 
-      // Invalidate conversation-list cache for all new members
-      if (redis) {
-        await Promise.allSettled(allMembers.map((uid) => redis!.del(convCacheKey(uid))));
-      }
+      await invalidateConversationCaches(allMembers);
     },
   );
+  // ── typing_start ────────────────────────────────────────────────────────────
+  // Payload: { conversationId: string }
+  // Broadcasts to the room excluding the sender. No DB write.
+  socket.on('typing_start', async (payload: { conversationId: string }) => {
+    const { conversationId } = payload;
+
+    const membership = await db.query.conversationMembers.findFirst({
+      where: and(
+        eq(conversationMembers.conversationId, conversationId),
+        eq(conversationMembers.userId, userId),
+      ),
+    });
+
+    if (!membership) {
+      socket.emit('error', { event: 'typing_start', message: 'Not a member of this conversation' });
+      return;
+    }
+
+    socket.to(conversationId).emit('typing_start', { conversationId, userId });
+  });
+
+  // ── typing_stop ─────────────────────────────────────────────────────────────
+  // Payload: { conversationId: string }
+  // Broadcasts to the room excluding the sender. No DB write.
+  socket.on('typing_stop', async (payload: { conversationId: string }) => {
+    const { conversationId } = payload;
+
+    const membership = await db.query.conversationMembers.findFirst({
+      where: and(
+        eq(conversationMembers.conversationId, conversationId),
+        eq(conversationMembers.userId, userId),
+      ),
+    });
+
+    if (!membership) {
+      socket.emit('error', { event: 'typing_stop', message: 'Not a member of this conversation' });
+      return;
+    }
+
+    socket.to(conversationId).emit('typing_stop', { conversationId, userId });
+  });
+
+  // ── ask_assistant ──────────────────────────────────────────────────────────
+  // Payload: { conversationId: string; content: string }
+  // Forwards to AI agent and posts reply from reserved assistant user.
+  // Rate-limit: 5 requests per user per minute.
+  const ASSISTANT_USER_ID = '00000000-0000-4000-8000-000000000000';
+
+  socket.on('ask_assistant', async (payload: { conversationId: string; content: string }) => {
+    const { conversationId, content } = payload;
+
+    if (!content?.trim().startsWith('@assistant')) {
+      return;
+    }
+
+    const membership = await db.query.conversationMembers.findFirst({
+      where: and(
+        eq(conversationMembers.conversationId, conversationId),
+        eq(conversationMembers.userId, userId),
+      ),
+    });
+
+    if (!membership) {
+      socket.emit('error', {
+        event: 'ask_assistant',
+        message: 'Not a member of this conversation',
+      });
+      return;
+    }
+
+    // Rate limiting
+    if (redis) {
+      const rlKey = `rl:ask_assistant:${userId}`;
+      const count = await redis.incr(rlKey);
+      if (count === 1) {
+        await redis.expire(rlKey, 60);
+      }
+      if (count > 5) {
+        socket.emit('error', { event: 'rate_limited', message: 'Rate limit exceeded' });
+        return;
+      }
+    }
+
+    // Forward to AI agent
+    try {
+      const response = await fetch('http://localhost:8000/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: content,
+          conversation_id: conversationId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('AI agent error');
+      }
+
+      const data = (await response.json()) as { reply: string };
+
+      // Ensure assistant user exists (upsert)
+      // Usually done via migration, but we can safely do it here or assume it exists.
+      // To be safe, we'll try to insert it and ignore conflict.
+      await db.execute(sql`
+        INSERT INTO users (id, username, avatar_url)
+        VALUES (${ASSISTANT_USER_ID}, 'Assistant', 'https://ui-avatars.com/api/?name=AI&background=0D8ABC&color=fff')
+        ON CONFLICT (id) DO NOTHING
+      `);
+
+      // Add to conversation members if not already
+      await db.execute(sql`
+        INSERT INTO conversation_members (conversation_id, user_id)
+        VALUES (${conversationId}, ${ASSISTANT_USER_ID})
+        ON CONFLICT DO NOTHING
+      `);
+
+      // Post the reply
+      const [replyMessage] = await db
+        .insert(messages)
+        .values({
+          conversationId,
+          senderId: ASSISTANT_USER_ID,
+          content: data.reply,
+        })
+        .returning();
+
+      io.to(conversationId).emit('new_message', replyMessage);
+
+      const members = await db.query.conversationMembers.findMany({
+        where: eq(conversationMembers.conversationId, conversationId),
+        columns: { userId: true },
+      });
+
+      await invalidateConversationCaches(members.map((member) => member.userId));
+    } catch (err) {
+      console.error('ask_assistant error:', err);
+      socket.emit('error', { event: 'ask_assistant', message: 'Failed to get AI reply' });
+    }
+  });
 }
