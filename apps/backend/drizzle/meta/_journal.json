@@ -15,6 +15,34 @@
       "when": 1778597011664,
       "tag": "0001_messaging",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780063933769,
+      "tag": "0002_greedy_hellion",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780129152703,
+      "tag": "0003_messages_content_search_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780241403332,
+      "tag": "0004_premium_mattie_franklin",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780269667000,
+      "tag": "0005_soft_deleted_messages",
+      "breakpoints": true
     }
   ]
 }
