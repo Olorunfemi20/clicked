@@ -1,5 +1,5 @@
-import { pgTable, text, timestamp, uuid, boolean, pgEnum } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { pgTable, text, timestamp, uuid, boolean, pgEnum, index } from 'drizzle-orm/pg-core';
+import { relations, sql } from 'drizzle-orm';
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -44,7 +44,35 @@ export const conversationMembers = pgTable('conversation_members', {
   joinedAt: timestamp('joined_at').notNull().defaultNow(),
 });
 
-export const messages = pgTable('messages', {
+export const messages = pgTable(
+  'messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    senderId: uuid('sender_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at'),
+  },
+  (table) => [
+    index('messages_content_search_idx').using(
+      'gin',
+      sql`to_tsvector('english', ${table.content})`,
+    ),
+  ],
+);
+
+// ─── Token transfers (#46) ────────────────────────────────────────────────────
+//
+// One row per Soroban `transfer` event the listener (services/stellarListener.ts)
+// pulls off the contract. The `txHash` is unique so reconnects + replayed event
+// pages upsert cleanly instead of producing duplicates.
+
+export const tokenTransfers = pgTable('token_transfers', {
   id: uuid('id').primaryKey().defaultRandom(),
   conversationId: uuid('conversation_id')
     .notNull()
@@ -52,7 +80,11 @@ export const messages = pgTable('messages', {
   senderId: uuid('sender_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
-  content: text('content').notNull(),
+  recipientAddress: text('recipient_address').notNull(),
+  amount: text('amount').notNull(),
+  tokenContractId: text('token_contract_id').notNull(),
+  txHash: text('tx_hash').notNull().unique(),
+  memo: text('memo'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
@@ -62,6 +94,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   wallets: many(wallets),
   memberships: many(conversationMembers),
   messages: many(messages),
+  transfers: many(tokenTransfers),
 }));
 
 export const walletsRelations = relations(wallets, ({ one }) => ({
@@ -71,6 +104,7 @@ export const walletsRelations = relations(wallets, ({ one }) => ({
 export const conversationsRelations = relations(conversations, ({ many }) => ({
   members: many(conversationMembers),
   messages: many(messages),
+  transfers: many(tokenTransfers),
 }));
 
 export const conversationMembersRelations = relations(conversationMembers, ({ one }) => ({
@@ -89,6 +123,17 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   sender: one(users, { fields: [messages.senderId], references: [users.id] }),
 }));
 
+export const tokenTransfersRelations = relations(tokenTransfers, ({ one }) => ({
+  conversation: one(conversations, {
+    fields: [tokenTransfers.conversationId],
+    references: [conversations.id],
+  }),
+  sender: one(users, {
+    fields: [tokenTransfers.senderId],
+    references: [users.id],
+  }),
+}));
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type User = typeof users.$inferSelect;
@@ -100,3 +145,5 @@ export type NewConversation = typeof conversations.$inferInsert;
 export type ConversationMember = typeof conversationMembers.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
+export type TokenTransfer = typeof tokenTransfers.$inferSelect;
+export type NewTokenTransfer = typeof tokenTransfers.$inferInsert;

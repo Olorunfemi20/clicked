@@ -65,9 +65,9 @@ fn setup(env: &Env) -> (Address, Address, Address, Address) {
 #[test]
 fn test_initialize() {
     let env = Env::default();
-    let (contract_id, _token_id, _admin, _member) = setup(&env);
+    let (contract_id, token_id, _admin, _member) = setup(&env);
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
-    assert_eq!(client.balance(), 0);
+    assert_eq!(client.balance(&token_id), 0);
 }
 
 #[test]
@@ -85,11 +85,11 @@ fn test_deposit_increases_balance() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, _token_id, _admin, member) = setup(&env);
+    let (contract_id, token_id, _admin, member) = setup(&env);
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
 
-    client.deposit(&member, &300_000);
-    assert_eq!(client.balance(), 300_000);
+    client.deposit(&member, &token_id, &300_000);
+    assert_eq!(client.balance(&token_id), 300_000);
 }
 
 #[test]
@@ -103,10 +103,10 @@ fn test_balance_reflects_multiple_deposits() {
     token.mint(&member2, &500_000);
 
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
-    client.deposit(&member, &200_000);
-    client.deposit(&member2, &150_000);
+    client.deposit(&member, &token_id, &200_000);
+    client.deposit(&member2, &token_id, &150_000);
 
-    assert_eq!(client.balance(), 350_000);
+    assert_eq!(client.balance(&token_id), 350_000);
 }
 
 #[test]
@@ -119,10 +119,10 @@ fn test_admin_can_withdraw() {
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
     let recipient = Address::generate(&env);
 
-    client.deposit(&member, &400_000);
-    client.withdraw(&recipient, &100_000);
+    client.deposit(&member, &token_id, &400_000);
+    client.withdraw(&recipient, &token_id, &100_000);
 
-    assert_eq!(client.balance(), 300_000);
+    assert_eq!(client.balance(&token_id), 300_000);
     assert_eq!(token.balance(&recipient), 100_000);
 }
 
@@ -139,12 +139,12 @@ fn test_balance_correct_after_deposits_and_withdrawals() {
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
     let recipient = Address::generate(&env);
 
-    client.deposit(&member, &600_000);
-    client.deposit(&member2, &200_000);
-    client.withdraw(&recipient, &300_000);
+    client.deposit(&member, &token_id, &600_000);
+    client.deposit(&member2, &token_id, &200_000);
+    client.withdraw(&recipient, &token_id, &300_000);
 
     // 600_000 + 200_000 - 300_000 = 500_000
-    assert_eq!(client.balance(), 500_000);
+    assert_eq!(client.balance(&token_id), 500_000);
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn test_non_admin_cannot_withdraw() {
 
     let recipient = Address::generate(&env);
     // admin.require_auth() inside withdraw will fail — no auth context set up.
-    client.withdraw(&recipient, &100);
+    client.withdraw(&recipient, &token_id, &100);
 }
 
 #[test]
@@ -170,7 +170,52 @@ fn test_non_admin_cannot_withdraw() {
 fn test_deposit_zero_panics() {
     let env = Env::default();
     env.mock_all_auths();
-    let (contract_id, _token_id, _admin, member) = setup(&env);
+    let (contract_id, token_id, _admin, member) = setup(&env);
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
-    client.deposit(&member, &0);
+    client.deposit(&member, &token_id, &0);
+}
+
+#[test]
+fn test_multi_token_deposits_tracked_separately() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let member = Address::generate(&env);
+
+    // Register two different tokens (e.g. XLM and USDC)
+    let xlm_id = env.register(mock_token::MockToken, ());
+    let usdc_id = env.register(mock_token::MockToken, ());
+
+    let xlm = MockTokenClient::new(&env, &xlm_id);
+    let usdc = MockTokenClient::new(&env, &usdc_id);
+
+    xlm.mint(&member, &100_000);
+    usdc.mint(&member, &100_000);
+
+    let contract_id = env.register(GroupTreasuryContract, ());
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &xlm_id); // initialize with XLM for compatibility
+
+    // Deposit XLM and USDC
+    client.deposit(&member, &xlm_id, &40_000);
+    client.deposit(&member, &usdc_id, &70_000);
+
+    // Verify balances are tracked separately
+    assert_eq!(client.balance(&xlm_id), 40_000);
+    assert_eq!(client.balance(&usdc_id), 70_000);
+}
+
+#[test]
+#[should_panic(expected = "insufficient funds")]
+fn test_withdraw_insufficient_funds_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, token_id, _admin, member) = setup(&env);
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+    let recipient = Address::generate(&env);
+
+    client.deposit(&member, &token_id, &50_000);
+    client.withdraw(&recipient, &token_id, &60_000); // 60k is more than 50k balance
 }

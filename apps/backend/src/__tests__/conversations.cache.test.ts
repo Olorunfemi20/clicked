@@ -9,7 +9,9 @@ const mockSetex = vi.fn();
 const mockDel = vi.fn();
 
 vi.mock('../lib/redis.js', () => ({
-  get redis() { return mockRedisInstance; },
+  get redis() {
+    return mockRedisInstance;
+  },
   CONV_CACHE_TTL: 30,
   convCacheKey: (userId: string) => `conversations:${userId}`,
 }));
@@ -27,17 +29,58 @@ let mockRedisInstance: {
 // ── DB mock ────────────────────────────────────────────────────────────────
 
 const mockFindMany = vi.fn();
+const mockFindFirst = vi.fn();
+const mockExecute = vi.fn();
+const mockGroupBy = vi.fn();
+const mockWhere = vi.fn(() => ({ groupBy: mockGroupBy }));
+const mockFrom = vi.fn(() => ({ where: mockWhere }));
+const mockSelect = vi.fn(() => ({ from: mockFrom }));
 
 vi.mock('../db/index.js', () => ({
   db: {
     query: {
-      conversationMembers: { findMany: mockFindMany },
+      conversationMembers: { findMany: mockFindMany, findFirst: mockFindFirst },
     },
+    execute: mockExecute,
+    select: mockSelect,
   },
 }));
 
-vi.mock('../db/schema.js', () => ({ conversationMembers: {} }));
-vi.mock('drizzle-orm', () => ({ eq: vi.fn() }));
+vi.mock('../lib/socket.js', () => ({
+  getSocketServer: () => null,
+}));
+
+vi.mock('../db/schema.js', () => ({
+  conversations: { id: 'id', type: 'type' },
+  conversationMembers: { conversationId: 'conversationId', userId: 'userId', joinedAt: 'joinedAt' },
+  messages: {
+    id: 'id',
+    conversationId: 'conversationId',
+    senderId: 'senderId',
+    content: 'content',
+    createdAt: 'createdAt',
+    deletedAt: 'deletedAt',
+  },
+  tokenTransfers: {},
+}));
+vi.mock('drizzle-orm', () => {
+  const sqlMock = Object.assign(
+    vi.fn(() => 'sql'),
+    {
+      join: vi.fn(() => 'joined'),
+    },
+  );
+
+  return {
+    and: vi.fn(),
+    asc: vi.fn(),
+    count: vi.fn(() => 'count'),
+    desc: vi.fn(),
+    eq: vi.fn(),
+    lt: vi.fn(),
+    sql: sqlMock,
+  };
+});
 
 // ── Auth middleware mock: always passes with test userId ───────────────────
 
@@ -67,6 +110,7 @@ describe('GET /conversations — Redis caching', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRedisInstance = { get: mockGet, setex: mockSetex, del: mockDel };
+    mockGroupBy.mockResolvedValue([]);
   });
 
   it('returns cached data without hitting DB on cache hit', async () => {
@@ -82,8 +126,10 @@ describe('GET /conversations — Redis caching', () => {
 
   it('queries DB and writes to cache on cache miss', async () => {
     mockGet.mockResolvedValue(null); // cache miss
-    const dbResult = [{ id: 'conv-2', type: 'group' }];
-    mockFindMany.mockResolvedValue(dbResult.map((c) => ({ conversation: c })));
+    const dbResult = [{ id: 'conv-2', type: 'group', messages: [], messageCount: 0 }];
+    mockFindMany.mockResolvedValue([
+      { conversationId: 'conv-2', conversation: { id: 'conv-2', type: 'group', messages: [] } },
+    ]);
     mockSetex.mockResolvedValue('OK');
 
     const res = await request(makeApp()).get('/conversations');
@@ -100,7 +146,9 @@ describe('GET /conversations — Redis caching', () => {
   it('falls back to DB when Redis is unavailable (redis is null)', async () => {
     mockRedisInstance = null; // simulate no Redis
     const dbResult = [{ id: 'conv-3' }];
-    mockFindMany.mockResolvedValue(dbResult.map((c) => ({ conversation: c })));
+    mockFindMany.mockResolvedValue(
+      dbResult.map((c) => ({ conversationId: c.id, conversation: c })),
+    );
 
     const res = await request(makeApp()).get('/conversations');
 
@@ -112,7 +160,9 @@ describe('GET /conversations — Redis caching', () => {
   it('falls back to DB when Redis.get throws', async () => {
     mockGet.mockRejectedValue(new Error('Redis connection refused'));
     const dbResult = [{ id: 'conv-4' }];
-    mockFindMany.mockResolvedValue(dbResult.map((c) => ({ conversation: c })));
+    mockFindMany.mockResolvedValue(
+      dbResult.map((c) => ({ conversationId: c.id, conversation: c })),
+    );
     mockSetex.mockResolvedValue('OK');
 
     const res = await request(makeApp()).get('/conversations');
@@ -134,5 +184,50 @@ describe('GET /conversations — Redis caching', () => {
       expect.any(Number),
       expect.any(String),
     );
+  });
+});
+
+describe('GET /conversations/:id/search', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedisInstance = { get: mockGet, setex: mockSetex, del: mockDel };
+  });
+
+  it('returns 400 when the query is empty', async () => {
+    const res = await request(makeApp()).get('/conversations/conv-1/search?q=   ');
+
+    expect(res.status).toBe(400);
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('returns 403 when the user is not a conversation member', async () => {
+    mockFindFirst.mockResolvedValue(undefined);
+
+    const res = await request(makeApp()).get('/conversations/conv-1/search?q=hello');
+
+    expect(res.status).toBe(403);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('returns ranked highlighted matches for conversation members', async () => {
+    const searchResults = [
+      {
+        id: 'msg-1',
+        conversationId: 'conv-1',
+        senderId: TEST_USER_ID,
+        content: 'hello from stellar',
+        snippet: '<mark>hello</mark> from stellar',
+        rank: '0.1',
+      },
+    ];
+    mockFindFirst.mockResolvedValue({ id: 'member-1' });
+    mockExecute.mockResolvedValue(searchResults);
+
+    const res = await request(makeApp()).get('/conversations/conv-1/search?q=hello');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ results: searchResults });
+    expect(mockExecute).toHaveBeenCalledTimes(1);
   });
 });
