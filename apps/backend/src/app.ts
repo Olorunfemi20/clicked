@@ -2,12 +2,18 @@ import express from 'express';
 import type { Express } from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
+import { readFileSync } from 'node:fs';
 import { sql } from 'drizzle-orm';
 import { db } from './db/index.js';
 import { authRouter } from './routes/auth.js';
 import { conversationsRouter } from './routes/conversations.js';
+import { messagesRouter } from './routes/messages.js';
 import { usersRouter } from './routes/users.js';
 import { requireAuth, type AuthRequest } from './middleware/auth.js';
+
+const packageJson = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as { version: string };
 
 export const app: Express = express();
 
@@ -18,16 +24,28 @@ if (process.env['NODE_ENV'] !== 'test') {
 }
 
 app.get('/health', async (_req, res) => {
+  const health = {
+    status: 'ok' as const,
+    db: 'connected' as const,
+    node: process.version,
+    version: packageJson.version,
+  };
+
   try {
     await db.execute(sql`SELECT 1`);
-    res.json({ status: 'ok', db: 'connected' });
+    res.json(health);
   } catch {
-    res.status(503).json({ status: 'error', db: 'unreachable' });
+    res.status(503).json({
+      ...health,
+      status: 'error',
+      db: 'unreachable',
+    });
   }
 });
 
 app.use('/auth', authRouter);
 app.use('/conversations', conversationsRouter);
+app.use('/messages', messagesRouter);
 app.use('/users', usersRouter);
 
 app.get('/me', requireAuth, (req, res) => {

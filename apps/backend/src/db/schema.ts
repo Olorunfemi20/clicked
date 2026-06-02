@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, pgEnum, numeric, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, boolean, pgEnum, index } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
 export const users = pgTable('users', {
@@ -56,9 +56,13 @@ export const messages = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     content: text('content').notNull(),
     createdAt: timestamp('created_at').notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at'),
   },
   (table) => [
-    index('messages_content_search_idx').using('gin', sql`to_tsvector('english', ${table.content})`),
+    index('messages_content_search_idx').using(
+      'gin',
+      sql`to_tsvector('english', ${table.content})`,
+    ),
   ],
 );
 
