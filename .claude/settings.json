@@ -9,7 +9,8 @@
       "Bash(pnpm test *)",
       "Bash(git stash *)",
       "Bash(git diff *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(echo \"exit: $?\")"
     ],
     "additionalDirectories": [
       "/private/tmp"
