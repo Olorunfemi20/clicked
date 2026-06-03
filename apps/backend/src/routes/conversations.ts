@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { IRouter } from 'express';
-import { and, count, desc, eq, lt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, lt, sql, ne } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { conversationMembers, conversations, messages, tokenTransfers } from '../db/schema.js';
 import { requireAuth, type AuthRequest } from '../middleware/auth.js';
@@ -87,7 +87,10 @@ conversationsRouter.get('/', async (req: AuthRequest, res) => {
   }
 
   const memberships = (await db.query.conversationMembers.findMany({
-    where: eq(conversationMembers.userId, userId),
+    where: and(
+      eq(conversationMembers.userId, userId),
+      showArchived ? undefined : ne(conversationMembers.isArchived, true),
+    ),
     with: {
       conversation: conversationRelations as never,
     },
