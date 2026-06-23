@@ -7,19 +7,19 @@ import { AuthProvider } from "@/components/auth/AuthProvider";
 import { WalletProvider } from "@/contexts/WalletContext";
 
 const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+  variable: '--font-geist-sans',
+  subsets: ['latin'],
 });
 
 const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  variable: '--font-geist-mono',
+  subsets: ['latin'],
 });
 
 export const metadata: Metadata = {
-  title: "Clicked — Web3 Social Messaging",
+  title: 'Clicked — Web3 Social Messaging',
   description:
-    "Chat, send tokens, and fund ideas — all in one place. A decentralized messaging platform built on Stellar.",
+    'Chat, send tokens, and fund ideas — all in one place. A decentralized messaging platform built on Stellar.',
 };
 
 export default function RootLayout({
@@ -28,14 +28,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
           <WalletProvider>
           <AuthProvider>
-           <ToastProvider>{children}</ToastProvider>
+            <ToastProvider>{children}</ToastProvider>
           </AuthProvider>
         </WalletProvider>
       </body>

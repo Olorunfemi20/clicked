@@ -4,8 +4,8 @@ mod storage;
 mod token_interface;
 mod test;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Map};
-use storage::{DataKey, DepositEvent, WithdrawEvent};
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Map, Vec};
+use storage::{DataKey, DepositEvent, WithdrawEvent, MemberAddedEvent, MemberRemovedEvent};
 use token_interface::TokenClient;
 
 #[contract]
@@ -13,7 +13,7 @@ pub struct GroupTreasuryContract;
 
 #[contractimpl]
 impl GroupTreasuryContract {
-    /// One-time initialisation. Sets the admin and sets up the balances map.
+    /// One-time initialisation. Sets the admin and sets up the balances map and members set.
     pub fn initialize(env: Env, admin: Address, _token: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -21,6 +21,106 @@ impl GroupTreasuryContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         let balances: Map<Address, i128> = Map::new(&env);
         env.storage().instance().set(&DataKey::Balances, &balances);
+        let members: Vec<Address> = Vec::new(&env);
+        env.storage().instance().set(&DataKey::Members, &members);
+    }
+
+    /// Admin-only: Add a new member to the treasury.
+    pub fn add_member(env: Env, member: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        admin.require_auth();
+
+        let mut members: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Members)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Check if member already exists
+        for existing_member in members.iter() {
+            if existing_member == member {
+                panic!("member already exists");
+            }
+        }
+
+        members.push_back(member.clone());
+        env.storage().instance().set(&DataKey::Members, &members);
+
+        env.events().publish(
+            (Symbol::new(&env, "member_added"),),
+            MemberAddedEvent {
+                member: member.clone(),
+                added_by: admin,
+            },
+        );
+    }
+
+    /// Admin-only: Remove a member from the treasury.
+    pub fn remove_member(env: Env, member: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        admin.require_auth();
+
+        let mut members: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Members)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut found = false;
+        let mut new_members: Vec<Address> = Vec::new(&env);
+        for existing_member in members.iter() {
+            if existing_member == member {
+                found = true;
+            } else {
+                new_members.push_back(existing_member);
+            }
+        }
+
+        if !found {
+            panic!("member not found");
+        }
+
+        env.storage().instance().set(&DataKey::Members, &new_members);
+
+        env.events().publish(
+            (Symbol::new(&env, "member_removed"),),
+            MemberRemovedEvent {
+                member: member.clone(),
+                removed_by: admin,
+            },
+        );
+    }
+
+    /// Check if an address is a member of the treasury.
+    pub fn is_member(env: Env, member: Address) -> bool {
+        let members: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Members)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        for existing_member in members.iter() {
+            if existing_member == member {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get all members of the treasury.
+    pub fn get_members(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Members)
+            .unwrap_or_else(|| Vec::new(&env))
     }
 
     /// Transfer `amount` tokens from `from` into the treasury.
