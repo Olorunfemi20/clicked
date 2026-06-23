@@ -219,3 +219,117 @@ fn test_withdraw_insufficient_funds_panics() {
     client.deposit(&member, &token_id, &50_000);
     client.withdraw(&recipient, &token_id, &60_000); // 60k is more than 50k balance
 }
+
+// ── Member Management Tests ───────────────────────────────────────────────────
+
+#[test]
+fn test_add_member() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, _token_id, admin, member) = setup(&env);
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+
+    client.add_member(&member);
+    assert!(client.is_member(&member));
+}
+
+#[test]
+#[should_panic(expected = "member already exists")]
+fn test_add_duplicate_member_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, _token_id, _admin, member) = setup(&env);
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+
+    client.add_member(&member);
+    client.add_member(&member); // Should panic
+}
+
+#[test]
+#[should_panic]
+fn test_non_admin_cannot_add_member() {
+    let env = Env::default();
+    // Do not mock all auths - non-admin should fail
+
+    let admin = Address::generate(&env);
+    let member = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+
+    let token_id = env.register(mock_token::MockToken, ());
+    let contract_id = env.register(GroupTreasuryContract, ());
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &token_id);
+
+    // non_admin tries to add member - should fail due to auth
+    client.add_member(&member);
+}
+
+#[test]
+fn test_remove_member() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, _token_id, _admin, member) = setup(&env);
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+
+    client.add_member(&member);
+    assert!(client.is_member(&member));
+
+    client.remove_member(&member);
+    assert!(!client.is_member(&member));
+}
+
+#[test]
+#[should_panic(expected = "member not found")]
+fn test_remove_nonexistent_member_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, _token_id, _admin, member) = setup(&env);
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+
+    client.remove_member(&member); // Member was never added
+}
+
+#[test]
+fn test_get_members() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, _token_id, _admin, member1) = setup(&env);
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+
+    let member2 = Address::generate(&env);
+    let member3 = Address::generate(&env);
+
+    client.add_member(&member1);
+    client.add_member(&member2);
+    client.add_member(&member3);
+
+    let members = client.get_members();
+    assert_eq!(members.len(), 3);
+}
+
+#[test]
+fn test_is_member_returns_false_for_non_member() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, _token_id, _admin, _member) = setup(&env);
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+
+    let non_member = Address::generate(&env);
+    assert!(!client.is_member(&non_member));
+}
+
+#[test]
+fn test_initialize_creates_empty_members_list() {
+    let env = Env::default();
+    let (contract_id, _token_id, _admin, _member) = setup(&env);
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+
+    let members = client.get_members();
+    assert_eq!(members.len(), 0);
+}
