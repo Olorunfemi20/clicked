@@ -23,10 +23,15 @@ export async function transferToken(
     process.env.NEXT_PUBLIC_TOKEN_TRANSFER_CONTRACT ||
     "REPLACE_WITH_TOKEN_TRANSFER_CONTRACT_ID";
 
-  const isConnected = await freighter.isConnected();
-  if (!isConnected) throw new Error("Freighter not installed or not connected");
+  const connectionStatus = await freighter.isConnected();
+  if (!connectionStatus.isConnected) {
+    throw new Error("Freighter not installed or not connected");
+  }
 
-  const publicKey = await freighter.getPublicKey();
+  const { address: publicKey, error: addressError } = await freighter.getAddress();
+  if (addressError || !publicKey) {
+    throw new Error("Unable to read Freighter wallet address");
+  }
 
   const contract = new Contract(CONTRACT_ID);
 
@@ -57,12 +62,16 @@ export async function transferToken(
   const prepared = SorobanRpc.assembleTransaction(tx, simResult).build();
   const txXdr = prepared.toXDR();
 
-  const signedXdr = await freighter.signTransaction(txXdr, {
+  const signResult = await freighter.signTransaction(txXdr, {
     networkPassphrase: NETWORK_PASSPHRASE,
   });
 
+  if (signResult.error || !signResult.signedTxXdr) {
+    throw new Error("Unable to sign transaction with Freighter");
+  }
+
   const { Transaction } = stellar;
-  const signedTx = new Transaction(signedXdr, NETWORK_PASSPHRASE);
+  const signedTx = new Transaction(signResult.signedTxXdr, NETWORK_PASSPHRASE);
   const sendResult = await server.sendTransaction(signedTx);
 
   if (sendResult.status === "ERROR") {
