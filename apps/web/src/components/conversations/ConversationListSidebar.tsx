@@ -333,7 +333,7 @@ export function ConversationListSidebar() {
             const title = conversationTitle(conversation, user?.walletAddress);
             const peer = getPeerUser(conversation, user?.walletAddress);
             const avatarUrl = peer?.avatarUrl ?? null;
-            const isOnline = peer ? onlineUsers.get(peer.id) ?? false : false;
+            const isOnline = peer?.id ? (onlineUsers.get(peer.id) ?? false) : false;
             const memberCount = conversation.members?.length ?? 0;
 
             return (

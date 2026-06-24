@@ -11,3 +11,6 @@ target/
 .soroban/
 .DS_Store
 .turbo/
+
+ISSUES.md
+IMPLEMENTATION_DOCS.md

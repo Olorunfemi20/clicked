@@ -14,7 +14,15 @@
 use super::*;
 use soroban_sdk::{testutils::Address as _, testutils::Ledger, Env, String};
 
-fn setup(env: &Env) -> (ProposalsContractClient<'static>, Address, Address, Address, Address) {
+fn setup(
+    env: &Env,
+) -> (
+    ProposalsContractClient<'static>,
+    Address,
+    Address,
+    Address,
+    Address,
+) {
     env.mock_all_auths();
     let contract_id = env.register_contract(None, ProposalsContract);
     let client = ProposalsContractClient::new(env, &contract_id);

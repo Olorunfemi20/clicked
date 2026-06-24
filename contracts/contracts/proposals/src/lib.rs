@@ -16,77 +16,17 @@
 
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol,
+mod storage;
+mod test;
+
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, String, Symbol};
+
+pub use storage::{
+    DataKey, Proposal, ProposalCreatedEvent, ProposalExecutedEvent, ProposalFinalizedEvent,
+    ProposalStatus, VoteCastEvent,
 };
 
-// ── Storage layout ──────────────────────────────────────────────────────────
-
-#[contracttype]
-pub enum DataKey {
-    Admin,
-    NextProposalId,
-    Proposal(u64),
-    Vote(u64, Address), // (proposal_id, voter) -> bool (true = yes, false = no)
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Executed,
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct Proposal {
-    pub id: u64,
-    pub proposer: Address,
-    pub description: String,
-    pub created_at: u64,
-    pub expires_at: u64,
-    pub yes_votes: u32,
-    pub no_votes: u32,
-    pub status: ProposalStatus,
-}
-
-// ── Events ──────────────────────────────────────────────────────────────────
-
-#[contracttype]
-#[derive(Clone)]
-pub struct ProposalCreatedEvent {
-    pub id: u64,
-    pub proposer: Address,
-    pub expires_at: u64,
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct VoteCastEvent {
-    pub id: u64,
-    pub voter: Address,
-    pub support: bool,
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct ProposalFinalizedEvent {
-    pub id: u64,
-    pub status: ProposalStatus,
-    pub yes_votes: u32,
-    pub no_votes: u32,
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct ProposalExecutedEvent {
-    pub id: u64,
-    pub executor: Address,
-}
-
-// ── Contract ────────────────────────────────────────────────────────────────
+// ── Contract ─────────────────────────────────────────────────────────────────
 
 #[contract]
 pub struct ProposalsContract;
@@ -102,7 +42,9 @@ impl ProposalsContract {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::NextProposalId, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::NextProposalId, &0u64);
     }
 
     /// Create a new proposal that expires at `expires_at` (unix seconds).
@@ -261,5 +203,3 @@ impl ProposalsContract {
             .expect("proposal not found")
     }
 }
-
-mod test;

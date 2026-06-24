@@ -1,12 +1,22 @@
 #![no_std]
 
 mod storage;
-mod token_interface;
 mod test;
+mod token_interface;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Map, Vec};
-use storage::{DataKey, DepositEvent, WithdrawEvent, MemberAddedEvent, MemberRemovedEvent};
+use soroban_sdk::{contract, contractimpl, Address, Env, Map, Symbol, Vec};
+use storage::{DataKey, DepositEvent, MemberAddedEvent, MemberRemovedEvent, WithdrawEvent};
 use token_interface::TokenClient;
+
+fn require_admin(env: &Env) -> Address {
+    let admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .expect("not initialized");
+    admin.require_auth();
+    admin
+}
 
 #[contract]
 pub struct GroupTreasuryContract;
@@ -27,12 +37,7 @@ impl GroupTreasuryContract {
 
     /// Admin-only: Add a new member to the treasury.
     pub fn add_member(env: Env, member: Address) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("not initialized");
-        admin.require_auth();
+        let admin = require_admin(&env);
 
         let mut members: Vec<Address> = env
             .storage()
@@ -61,12 +66,7 @@ impl GroupTreasuryContract {
 
     /// Admin-only: Remove a member from the treasury.
     pub fn remove_member(env: Env, member: Address) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("not initialized");
-        admin.require_auth();
+        let admin = require_admin(&env);
 
         let mut members: Vec<Address> = env
             .storage()
@@ -88,7 +88,9 @@ impl GroupTreasuryContract {
             panic!("member not found");
         }
 
-        env.storage().instance().set(&DataKey::Members, &new_members);
+        env.storage()
+            .instance()
+            .set(&DataKey::Members, &new_members);
 
         env.events().publish(
             (Symbol::new(&env, "member_removed"),),
@@ -130,11 +132,7 @@ impl GroupTreasuryContract {
         }
         from.require_auth();
 
-        TokenClient::new(&env, &token).transfer(
-            &from,
-            &env.current_contract_address(),
-            &amount,
-        );
+        TokenClient::new(&env, &token).transfer(&from, &env.current_contract_address(), &amount);
 
         let mut balances: Map<Address, i128> = env
             .storage()
@@ -158,12 +156,7 @@ impl GroupTreasuryContract {
             panic!("amount must be positive");
         }
 
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .expect("not initialized");
-        admin.require_auth();
+        let admin = require_admin(&env);
 
         let mut balances: Map<Address, i128> = env
             .storage()
@@ -176,11 +169,7 @@ impl GroupTreasuryContract {
             panic!("insufficient funds");
         }
 
-        TokenClient::new(&env, &token).transfer(
-            &env.current_contract_address(),
-            &to,
-            &amount,
-        );
+        TokenClient::new(&env, &token).transfer(&env.current_contract_address(), &to, &amount);
 
         balances.set(token.clone(), current - amount);
         env.storage().instance().set(&DataKey::Balances, &balances);

@@ -6,6 +6,9 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import weaviate
+from weaviate.classes.query import Filter
+
 app = FastAPI(title="AI Agent API")
 
 _SYSTEM_PROMPT = (
@@ -167,7 +170,6 @@ def summarise_proposal(request: ProposalSummariseRequest):
 @app.post("/index/message")
 def index_message(request: IndexMessageRequest):
     try:
-        import weaviate
         # Attempt connection to Weaviate
         client = weaviate.connect_to_local()
     except Exception as e:
@@ -218,7 +220,6 @@ def index_message(request: IndexMessageRequest):
 @app.get("/search")
 def search_messages(q: str, conversationId: str):
     try:
-        import weaviate
         client = weaviate.connect_to_local()
     except Exception as e:
         raise HTTPException(status_code=503, detail="Weaviate connection failed")
@@ -233,8 +234,6 @@ def search_messages(q: str, conversationId: str):
         openai_client = _openai_client()
         res = openai_client.embeddings.create(input=q, model="text-embedding-3-small")
         vector = res.data[0].embedding
-        
-        from weaviate.classes.query import Filter
         
         results = collection.query.near_vector(
             near_vector=vector,

@@ -1,8 +1,8 @@
 #![no_std]
 
 mod storage;
-mod token_interface;
 mod test;
+mod token_interface;
 
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol};
 use storage::{DataKey, TransferEvent};
@@ -20,7 +20,9 @@ impl TokenTransferContract {
             panic!("already initialized");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::TokenContract, &token_contract);
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenContract, &token_contract);
     }
 
     /// Transfer `amount` of the configured token from `from` to `to`.
@@ -51,10 +53,8 @@ impl TokenTransferContract {
             memo,
         };
 
-        env.events().publish(
-            (Symbol::new(&env, "transfer"),),
-            event,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "transfer"),), event);
     }
 
     /// Read the token balance of any address.
@@ -84,7 +84,9 @@ impl TokenTransferContract {
             .get(&DataKey::Admin)
             .expect("not initialized");
         admin.require_auth();
-        env.storage().instance().set(&DataKey::TokenContract, &new_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenContract, &new_token);
     }
 
     /// Admin-only contract upgrade (#44). Swaps the contract's wasm in-place

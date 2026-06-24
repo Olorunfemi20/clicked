@@ -13,7 +13,7 @@ export async function transferToken(
   const stellar = await import("stellar-sdk");
 
   const { SorobanRpc, xdr, TransactionBuilder, BASE_FEE, Contract, Networks, nativeToScVal } =
-    stellar as any;
+    stellar;
 
   const RPC_URL =
     process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org";
@@ -23,12 +23,16 @@ export async function transferToken(
     process.env.NEXT_PUBLIC_TOKEN_TRANSFER_CONTRACT ||
     "REPLACE_WITH_TOKEN_TRANSFER_CONTRACT_ID";
 
-  const isConnected = await freighter.isConnected();
-  if (!isConnected) throw new Error("Freighter not installed or not connected");
+  const connectionStatus = await freighter.isConnected();
+  if (!connectionStatus.isConnected) {
+    throw new Error("Freighter not installed or not connected");
+  }
 
-  const publicKey = await freighter.getPublicKey();
+  const { address: publicKey, error: addressError } = await freighter.getAddress();
+  if (addressError || !publicKey) {
+    throw new Error("Unable to read Freighter wallet address");
+  }
 
-  // Build contract call operation
   const contract = new Contract(CONTRACT_ID);
 
   const fromSc = nativeToScVal(publicKey, { type: "address" });
@@ -58,12 +62,16 @@ export async function transferToken(
   const prepared = SorobanRpc.assembleTransaction(tx, simResult).build();
   const txXdr = prepared.toXDR();
 
-  const signedXdr = await freighter.signTransaction(txXdr, {
+  const signResult = await freighter.signTransaction(txXdr, {
     networkPassphrase: NETWORK_PASSPHRASE,
   });
 
-  const { Transaction } = stellar as any;
-  const signedTx = new Transaction(signedXdr, NETWORK_PASSPHRASE);
+  if (signResult.error || !signResult.signedTxXdr) {
+    throw new Error("Unable to sign transaction with Freighter");
+  }
+
+  const { Transaction } = stellar;
+  const signedTx = new Transaction(signResult.signedTxXdr, NETWORK_PASSPHRASE);
   const sendResult = await server.sendTransaction(signedTx);
 
   if (sendResult.status === "ERROR") {
@@ -72,16 +80,15 @@ export async function transferToken(
 
   const hash = sendResult.hash;
 
-  // Poll for final status
   for (let i = 0; i < 30; i++) {
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
     try {
       const status = await server.getTransaction(hash);
       if (status.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) return hash;
       if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
         throw new Error(`Transaction reverted: ${hash}`);
       }
-    } catch (err) {
+    } catch {
       // keep polling until timeout
     }
   }

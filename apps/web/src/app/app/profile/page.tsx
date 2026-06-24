@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/components/auth/useAuth';
 import { apiFetch } from '@/lib/api';
 
 type FieldErrors = {
@@ -71,7 +71,7 @@ function mapApiErrors(status: number, payload: unknown): FieldErrors {
 }
 
 export default function ProfilePage() {
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [username, setUsername] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
@@ -82,7 +82,7 @@ export default function ProfilePage() {
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
   const fetchProfile = useCallback(async () => {
-    if (!token || !user?.userId) {
+    if (!token) {
       setIsLoading(false);
       return;
     }
@@ -91,7 +91,7 @@ export default function ProfilePage() {
     setLoadError(null);
 
     try {
-      const response = await apiFetch(`/users/${user.userId}`, {
+      const response = await apiFetch('/users/me', {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -108,7 +108,7 @@ export default function ProfilePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, user?.userId]);
+  }, [token]);
 
   useEffect(() => {
     void fetchProfile();
