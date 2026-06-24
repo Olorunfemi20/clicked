@@ -117,6 +117,7 @@ describe('GET /conversations — Redis caching', () => {
     vi.clearAllMocks();
     mockRedisInstance = { get: mockGet, setex: mockSetex, del: mockDel };
     mockGroupBy.mockResolvedValue([]);
+    mockExecute.mockResolvedValue([]);
   });
 
   it('returns cached data without hitting DB on cache hit', async () => {
