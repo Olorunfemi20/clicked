@@ -299,9 +299,7 @@ describe('PATCH /conversations/:id', () => {
   it('returns 400 for DM conversations', async () => {
     mockFindConversation.mockResolvedValue({ id: 'conv-dm', type: 'dm' });
 
-    const res = await request(makeApp())
-      .patch('/conversations/conv-dm')
-      .send({ name: 'New Name' });
+    const res = await request(makeApp()).patch('/conversations/conv-dm').send({ name: 'New Name' });
 
     expect(res.status).toBe(400);
     expect(mockUpdateSet).not.toHaveBeenCalled();
@@ -311,18 +309,14 @@ describe('PATCH /conversations/:id', () => {
     mockFindConversation.mockResolvedValue({ id: 'conv-1', type: 'group' });
     mockFindMember.mockResolvedValue(undefined);
 
-    const res = await request(makeApp())
-      .patch('/conversations/conv-1')
-      .send({ name: 'New Name' });
+    const res = await request(makeApp()).patch('/conversations/conv-1').send({ name: 'New Name' });
 
     expect(res.status).toBe(403);
     expect(mockUpdateSet).not.toHaveBeenCalled();
   });
 
   it('returns 400 when neither name nor avatarUrl is provided', async () => {
-    const res = await request(makeApp())
-      .patch('/conversations/conv-1')
-      .send({});
+    const res = await request(makeApp()).patch('/conversations/conv-1').send({});
 
     expect(res.status).toBe(400);
   });
@@ -341,9 +335,7 @@ describe('PATCH /conversations/:id', () => {
     mockUpdateReturning.mockResolvedValue([updatedConv]);
     mockFindMany.mockResolvedValue([{ userId: 'user-1' }, { userId: 'user-2' }]);
 
-    const res = await request(makeApp())
-      .patch('/conversations/conv-1')
-      .send({ name: 'New Name' });
+    const res = await request(makeApp()).patch('/conversations/conv-1').send({ name: 'New Name' });
 
     expect(res.status).toBe(200);
     expect(mockUpdate).toHaveBeenCalled();

@@ -135,7 +135,10 @@ conversationsRouter.get('/', async (req: AuthRequest, res) => {
             FROM conversation_members cm
             LEFT JOIN messages lrm ON lrm.id = cm.last_read_message_id
             WHERE cm.user_id = ${userId}::uuid
-              AND cm.conversation_id = ANY(ARRAY[${sql.join(conversationIds.map((id) => sql`${id}::uuid`), sql`, `)}])
+              AND cm.conversation_id = ANY(ARRAY[${sql.join(
+                conversationIds.map((id) => sql`${id}::uuid`),
+                sql`, `,
+              )}])
           `)),
         ]
       : [];

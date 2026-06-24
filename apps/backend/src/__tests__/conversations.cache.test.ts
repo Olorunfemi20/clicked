@@ -132,7 +132,6 @@ describe('GET /conversations — Redis caching', () => {
 
   it('queries DB and writes to cache on cache miss', async () => {
     mockGet.mockResolvedValue(null); // cache miss
-    const dbResult = [{ id: 'conv-2', type: 'group', messages: [], messageCount: 0 }];
     mockFindMany.mockResolvedValue([
       { conversationId: 'conv-2', conversation: { id: 'conv-2', type: 'group', messages: [] } },
     ]);
@@ -142,11 +141,7 @@ describe('GET /conversations — Redis caching', () => {
 
     expect(res.status).toBe(200);
     expect(mockFindMany).toHaveBeenCalled();
-    expect(mockSetex).toHaveBeenCalledWith(
-      `conversations:${TEST_USER_ID}`,
-      30,
-      expect.any(String),
-    );
+    expect(mockSetex).toHaveBeenCalledWith(`conversations:${TEST_USER_ID}`, 30, expect.any(String));
   });
 
   it('falls back to DB when Redis is unavailable (redis is null)', async () => {

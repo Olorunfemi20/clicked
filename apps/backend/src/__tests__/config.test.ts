@@ -39,6 +39,8 @@ describe('loadEnv', () => {
 
     const { DATABASE_URL: _omitted, ...withoutDbUrl } = validEnv;
 
+    const _ = _omitted; // eslint-disable-line @typescript-eslint/no-unused-vars
+
     expect(() => loadEnv(withoutDbUrl)).toThrow('process.exit called');
     expect(exitSpy).toHaveBeenCalledWith(1);
 
