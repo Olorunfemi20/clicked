@@ -1,4 +1,14 @@
-import { pgTable, text, timestamp, uuid, boolean, pgEnum, index } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+  boolean,
+  integer,
+  pgEnum,
+  index,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
 export const users = pgTable('users', {
@@ -91,6 +101,41 @@ export const tokenTransfers = pgTable('token_transfers', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// ─── User devices (#153) ──────────────────────────────────────────────────────
+//
+// Device identity registry for end-to-end encryption. Each row is one device a
+// user has registered, holding its long-term identity public key. A device is
+// never hard-deleted — revoking sets `revokedAt` so historical sessions stay
+// auditable. `(userId, deviceId)` is unique so a client re-registering the same
+// device upserts instead of duplicating, and the partial index keeps lookups of
+// a user's *active* devices fast.
+
+export const devicePlatformEnum = pgEnum('device_platform', ['web', 'ios', 'android']);
+
+export const userDevices = pgTable(
+  'user_devices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    deviceId: text('device_id').notNull(),
+    deviceName: text('device_name').notNull(),
+    platform: devicePlatformEnum('platform').notNull(),
+    identityPublicKey: text('identity_public_key').notNull(),
+    registrationId: integer('registration_id'),
+    lastSeenAt: timestamp('last_seen_at'),
+    revokedAt: timestamp('revoked_at'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('user_devices_user_id_device_id_unique').on(table.userId, table.deviceId),
+    index('user_devices_user_id_active_idx')
+      .on(table.userId)
+      .where(sql`${table.revokedAt} IS NULL`),
+  ],
+);
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -98,6 +143,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   memberships: many(conversationMembers),
   messages: many(messages),
   transfers: many(tokenTransfers),
+  devices: many(userDevices),
 }));
 
 export const walletsRelations = relations(wallets, ({ one }) => ({
@@ -137,6 +183,10 @@ export const tokenTransfersRelations = relations(tokenTransfers, ({ one }) => ({
   }),
 }));
 
+export const userDevicesRelations = relations(userDevices, ({ one }) => ({
+  user: one(users, { fields: [userDevices.userId], references: [users.id] }),
+}));
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type User = typeof users.$inferSelect;
@@ -150,3 +200,5 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type TokenTransfer = typeof tokenTransfers.$inferSelect;
 export type NewTokenTransfer = typeof tokenTransfers.$inferInsert;
+export type UserDevice = typeof userDevices.$inferSelect;
+export type NewUserDevice = typeof userDevices.$inferInsert;
