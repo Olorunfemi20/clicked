@@ -59,7 +59,7 @@ fn setup(env: &Env) -> (Address, Address, Address, Address) {
 
     let contract_id = env.register(GroupTreasuryContract, ());
     let client = GroupTreasuryContractClient::new(env, &contract_id);
-    client.initialize(&admin, &token_id);
+    client.initialize(&admin, &token_id, &1);
 
     (contract_id, token_id, admin, member)
 }
@@ -79,7 +79,7 @@ fn test_double_initialize_panics() {
     let (contract_id, token_id, _admin, _member) = setup(&env);
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
     let other = Address::generate(&env);
-    client.initialize(&other, &token_id);
+    client.initialize(&other, &token_id, &1);
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn test_non_admin_cannot_withdraw() {
 
     let contract_id = env.register(GroupTreasuryContract, ());
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &token_id);
+    client.initialize(&admin, &token_id, &1);
 
     let recipient = Address::generate(&env);
     // admin.require_auth() inside withdraw will fail — no auth context set up.
@@ -197,7 +197,7 @@ fn test_multi_token_deposits_tracked_separately() {
 
     let contract_id = env.register(GroupTreasuryContract, ());
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &xlm_id); // initialize with XLM for compatibility
+    client.initialize(&admin, &xlm_id, &1); // initialize with XLM for compatibility
 
     // Deposit XLM and USDC
     client.deposit(&member, &xlm_id, &40_000);
@@ -262,7 +262,7 @@ fn test_non_admin_cannot_add_member() {
     let token_id = env.register(mock_token::MockToken, ());
     let contract_id = env.register(GroupTreasuryContract, ());
     let client = GroupTreasuryContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &token_id);
+    client.initialize(&admin, &token_id, &1);
 
     // non_admin tries to add member - should fail due to auth
     client.add_member(&member);
@@ -334,4 +334,33 @@ fn test_initialize_creates_empty_members_list() {
 
     let members = client.get_members();
     assert_eq!(members.len(), 0);
+}
+
+// ── Threshold Tests ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_get_threshold_returns_configured_value() {
+    let env = Env::default();
+
+    let admin = Address::generate(&env);
+    let token_id = env.register(mock_token::MockToken, ());
+
+    let contract_id = env.register(GroupTreasuryContract, ());
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &token_id, &3);
+
+    assert_eq!(client.get_threshold(), 3);
+}
+
+#[test]
+#[should_panic(expected = "threshold must be at least 1")]
+fn test_initialize_zero_threshold_panics() {
+    let env = Env::default();
+
+    let admin = Address::generate(&env);
+    let token_id = env.register(mock_token::MockToken, ());
+
+    let contract_id = env.register(GroupTreasuryContract, ());
+    let client = GroupTreasuryContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &token_id, &0);
 }

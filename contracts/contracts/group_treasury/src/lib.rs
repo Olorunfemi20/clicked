@@ -23,16 +23,35 @@ pub struct GroupTreasuryContract;
 
 #[contractimpl]
 impl GroupTreasuryContract {
-    /// One-time initialisation. Sets the admin and sets up the balances map and members set.
-    pub fn initialize(env: Env, admin: Address, _token: Address) {
+    /// One-time initialisation. Sets the admin, the approval `threshold`, and sets up the
+    /// balances map and members set. `threshold` is the number of approvals required to
+    /// execute a withdraw proposal and must be at least 1.
+    pub fn initialize(env: Env, admin: Address, _token: Address, threshold: u32) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
+        if threshold == 0 {
+            panic!("threshold must be at least 1");
+        }
         env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::Threshold, &threshold);
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalCount, &0u32);
         let balances: Map<Address, i128> = Map::new(&env);
         env.storage().instance().set(&DataKey::Balances, &balances);
         let members: Vec<Address> = Vec::new(&env);
         env.storage().instance().set(&DataKey::Members, &members);
+    }
+
+    /// Returns the configured approval threshold.
+    pub fn get_threshold(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::Threshold)
+            .expect("not initialized")
     }
 
     /// Admin-only: Add a new member to the treasury.
