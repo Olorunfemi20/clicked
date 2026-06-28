@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { IRouter } from 'express';
+import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
 import { requireAuth, type AuthRequest } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';

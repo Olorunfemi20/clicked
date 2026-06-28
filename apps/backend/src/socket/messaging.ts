@@ -239,7 +239,7 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
           ),
         );
 
-      io.to(conversationId).emit('read_receipt', { userId, lastReadMessageId });
+      io.to(conversationId).volatile.emit('read_receipt', { userId, lastReadMessageId });
     },
   );
 
@@ -290,7 +290,7 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
       return;
     }
 
-    socket.to(conversationId).emit('typing_start', { conversationId, userId });
+    socket.to(conversationId).volatile.emit('typing_start', { conversationId, userId });
   });
 
   // ── typing_stop ─────────────────────────────────────────────────────────────
@@ -311,7 +311,7 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
       return;
     }
 
-    socket.to(conversationId).emit('typing_stop', { conversationId, userId });
+    socket.to(conversationId).volatile.emit('typing_stop', { conversationId, userId });
   });
 
   // ── ask_assistant ──────────────────────────────────────────────────────────
@@ -399,7 +399,7 @@ export function registerMessagingHandlers(io: Server, socket: AuthSocket): void 
         })
         .returning();
 
-      io.to(conversationId).emit('new_message', replyMessage);
+      io.to(conversationId).volatile.emit('new_message', replyMessage);
 
       const members = await db.query.conversationMembers.findMany({
         where: eq(conversationMembers.conversationId, conversationId),

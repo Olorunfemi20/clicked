@@ -16,6 +16,7 @@ export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   username: text('username').unique(),
   avatarUrl: text('avatar_url'),
+  presenceVisible: boolean('presence_visible').notNull().default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
